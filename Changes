@@ -1,0 +1,5 @@
+Revision history for Faster-Maths
+
+0.001 - not released
+      Copied from Faster-Maths and greatly mangled.
+      Currently only a test mechanism, it generates code to STDOUT.

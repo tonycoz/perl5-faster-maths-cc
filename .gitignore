@@ -1,0 +1,12 @@
+blib
+*~
+*.o
+*.bs
+CC.c
+MYMETA.*
+Makefile
+MANIFEST.bak
+pm_to_blib
+Faster-Maths-CC-[0-9]*
+perf.data
+perf.data.old
