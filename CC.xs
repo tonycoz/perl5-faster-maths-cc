@@ -240,7 +240,8 @@ MY_compile_code(pTHX_ OP *start, OP *final)
     if(o == final)
       break;
   }
-  std::cout << "Stack: " << stack << "\n";
+  if (DebugFlags(CCDebugFlags::DumpStack))
+    std::cerr << "Stack: " << stack << "\n";
 
   return o;
 

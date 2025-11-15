@@ -46,22 +46,27 @@ Some thoughts:
 - caching, yay
 
 ```
-$ ~/perl/v5.42.0-debug/bin/perl -Mblib -MFaster::Maths::CC -e 'my ($x, $y, $z); $z = $x + $y + 1'
+$ PERL_MFC_DEBUG=c ~/perl/v5.42.0-debug/bin/perl -Mblib -MFaster::Maths::CC -e 'my ($x, $y, $z); $z = 2 + $x + $y + 1'
+sv_setnv(PAD_SV(4), 2 + SvNV(PAD_SV(1) /* $x */));
+sv_setnv(PAD_SV(5), SvNV(PAD_SV(4)) + SvNV(PAD_SV(2) /* $y */));
+sv_setnv(PAD_SV(3) /* $z */, SvNV(PAD_SV(5)) + 1);
+$ PERL_MFC_DEBUG=cos ~/perl/v5.42.0-debug/bin/perl -Mblib -MFaster::Maths::CC -e 'my ($x, $y, $z); $z = 2 + $x + $y + 1'
 Stack: 
-Op: padsv
-Stack: PAD_SV(1) /* $x */ 
-Op: padsv
-Stack: PAD_SV(1) /* $x */ PAD_SV(2) /* $y */ 
-Op: add
-sv_setnv(PAD_SV(4), PAD_SV(1) /* $x */ + PAD_SV(2) /* $y */);
-Stack: PAD_SV(4) 
 Op: const
-SV = IV(0x563deb29a808) at 0x563deb29a818
-  REFCNT = 1
-  FLAGS = (IOK,READONLY,PROTECT,pIOK)
-  IV = 1
-Stack: PAD_SV(4) SomeSV /* 0x563deb29a818 */ 
+Stack: SomeSV /* 0x5592ca6fa800 */ 
+Op: padsv
+Stack: SomeSV /* 0x5592ca6fa800 */ PAD_SV(1) /* $x */ 
 Op: add
-sv_setnv(PAD_SV(3) /* $z */, PAD_SV(4) + 1);
-Stack: PAD_SV(3) /* $z */ 
+sv_setnv(PAD_SV(4), 2 + SvNV(PAD_SV(1) /* $x */));
+Stack: PAD_SV(4) 
+Op: padsv
+Stack: PAD_SV(4) PAD_SV(2) /* $y */ 
+Op: add
+sv_setnv(PAD_SV(5), SvNV(PAD_SV(4)) + SvNV(PAD_SV(2) /* $y */));
+Stack: PAD_SV(5) 
+Op: const
+Stack: PAD_SV(5) SomeSV /* 0x5592ca728558 */ 
+Op: add
+sv_setnv(PAD_SV(3) /* $z */, SvNV(PAD_SV(5)) + 1);
+Stack: PAD_SV(3) /* $z */
 ```
