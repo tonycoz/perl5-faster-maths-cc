@@ -27,9 +27,16 @@ There's a few things I want to do here, of which none might happen:
 - replace various standard functions by direct calls, so POSIX::ceil()
   just calls ceil().
 - do more than just maths
-- allow leaf functions to be called directly from other FMC com
+- allow leaf functions to be called directly from other FMC code
 - use attributes or `my $x : integer` syntax to mark variables as a
   given type and produce code based on that.
+- optimize to avoid multiple PAD_SV() calls for the same index, if
+  nothing else the compiler can optimize away the memory access
+- handle intermediate results as their types, eg, i_add always makes
+  an IV, so don't bother storing it in a padsv unless it's the final
+  result
+- handle LVINTRO padsvs (need to handle padsv_store, padsv with and
+  without those flags)
 
 Some thoughts:
 
