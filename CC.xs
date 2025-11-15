@@ -18,7 +18,32 @@
 #include "perl.h"
 #include "XSUB.h"
 #include "ppport.h"
+#include "cpputil.h"
 
+enum class CCDebugFlags {
+  DumpStack = 0x0001,
+  DumpCode  = 0x0002,
+  TraceOps  = 0x0004,
+};
+
+using CCDebugBits = BitSet<CCDebugFlags>;
+
+static CCDebugBits DebugFlags;
+
+static void
+init_debug_flags() {
+  const char *env = getenv("PERL_MFC_DEBUG");
+  if (env) {
+    while (*env) {
+      switch (*env) {
+      case 'c': DebugFlags |= CCDebugFlags::DumpCode;  break;
+      case 's': DebugFlags |= CCDebugFlags::DumpStack; break;
+      case 'o': DebugFlags |= CCDebugFlags::TraceOps;  break;
+      }
+      ++env;
+    }
+  }
+}
 
 struct PadSv {
   PADOFFSET index = 0;
@@ -176,8 +201,10 @@ MY_compile_code(pTHX_ OP *start, OP *final)
 
   Stack stack;
   for(o = start; o; o = o->op_next) {
-    std::cout << "Stack: " << stack << "\n";
-    std::cout << "Op: " << OP_NAME(o) << "\n";
+    if (DebugFlags(CCDebugFlags::DumpStack))
+      std::cerr << "Stack: " << stack << "\n";
+    if (DebugFlags(CCDebugFlags::TraceOps))
+      std::cerr << "Op: " << OP_NAME(o) << "\n";
     switch(o->op_type) {
       case OP_CONST:
         stack.emplace_back(ConstSv{cSVOPo->op_sv});
@@ -340,7 +367,7 @@ my_rpeepp(pTHX_ OP *o)
 MODULE = Faster::Maths::CC    PACKAGE = Faster::Maths::CC
 
 BOOT:
-  /* TODO: find the correct wrapper function for this */
+  init_debug_flags();
   next_rpeepp = PL_rpeepp;
   PL_rpeepp = &my_rpeepp;
 
