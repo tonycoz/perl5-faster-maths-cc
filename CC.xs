@@ -119,7 +119,10 @@ operator <<(std::ostream &out, const RawNumber &num) {
 
 std::ostream &
 operator <<(std::ostream &out, const NumArg &arg) {
-  std::visit( [&]( const auto &a) { out << a; }, arg);
+  std::visit( overloaded {
+      [&]( const ArgType &a) { out << "SvNV(" << a << ")"; },
+        [&]( const auto &a) { out << a; },
+        }, arg);
   return out;
 }
 
