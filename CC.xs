@@ -9,7 +9,7 @@
 #include <sstream>
 #include <iostream>
 #include <tuple>
-#include <print>
+#include <utility>
 
 // lazy for now
 //#define PERL_NO_GET_CONTEXT
@@ -20,6 +20,9 @@
 #include "ppport.h"
 #include "cpputil.h"
 
+namespace {
+
+
 enum class CCDebugFlags {
   DumpStack = 0x0001,
   DumpCode  = 0x0002,
@@ -28,9 +31,9 @@ enum class CCDebugFlags {
 
 using CCDebugBits = BitSet<CCDebugFlags>;
 
-static CCDebugBits DebugFlags;
+CCDebugBits DebugFlags;
 
-static void
+void
 init_debug_flags() {
   const char *env = getenv("PERL_MFC_DEBUG");
   if (env) {
@@ -61,6 +64,11 @@ struct RawNumber {
 
 using NumArg = std::variant<ArgType, RawNumber>;
 
+// a result returned from a code fragment
+struct CodeResult {
+  std::variant<PadSv, RawNumber> result;
+};
+
 // helper for visiting
 template<class... Ts>
 struct overloaded : Ts... { using Ts::operator()...; };
@@ -83,8 +91,6 @@ as_number(const ArgType &arg) {
 
 using Stack = std::vector<ArgType>;
 
-namespace {
-
 std::ostream &
 operator <<(std::ostream &out, const PadSv &psv) {
   out << "PAD_SV(" << psv.index << ")";
@@ -101,7 +107,6 @@ operator <<(std::ostream &out, const PadSv &psv) {
 std::ostream &
 operator <<(std::ostream &out, const ConstSv &psv) {
   out << "SomeSV /* " << (void *)psv.sv << " */";
-  sv_dump(psv.sv);
   return out;
 }
 
@@ -126,11 +131,13 @@ operator <<(std::ostream &out, const NumArg &arg) {
   return out;
 }
 
+#if 0
 std::ostream &
 operator <<(std::ostream &out, SV *sv) {
   out << SvPV_nolen(sv);
   return out;
 }
+#endif
 
 std::ostream &
 operator <<(std::ostream &out, const Stack &s) {
@@ -140,6 +147,25 @@ operator <<(std::ostream &out, const Stack &s) {
   return out;
 }
 
+/* Used to generate code for an op tree fragment */
+struct CodeFragment {
+  std::ostringstream code;
+  std::vector<OP*> ops;
+  CodeResult result;
+};
+
+template <typename T>
+concept Insertable = requires (T a) {
+  { std::declval<std::ostream>() << a };//->std::convertible_to<std::ostream &>;
+};
+
+//template <Insertable Val>
+CodeFragment &
+operator <<(CodeFragment &os, auto const &v) {
+  os.code << v;
+  if (DebugFlags(CCDebugFlags::DumpCode))
+    std::cerr << v;
+  return os;
 }
 
 #if 0
@@ -172,15 +198,17 @@ struct Code {
 
 #endif
 
-static XOP xop_callcompiled;
-static OP *pp_callcompiled(pTHX)
+XOP xop_callcompiled;
+OP *pp_callcompiled(pTHX)
 {
   dSP;
   abort(); // nothing yet
   RETURN;
 }
 
-static void
+#if 0
+
+void
 add_code(pTHX_ const char *name, SV *out) {
   HV *code_hv = get_hv("Faster::Maths::CC::code", 0);
   assert(code_hv);
@@ -191,10 +219,12 @@ add_code(pTHX_ const char *name, SV *out) {
   sv_catsv(out, *code_sv);
 }
 
+#endif
+
 #define compile_code(code, start, final) \
-  MY_compile_code(aTHX_ start, final)
-static OP *
-MY_compile_code(pTHX_ OP *start, OP *final)
+  MY_compile_code(aTHX_ code, start, final)
+OP *
+MY_compile_code(pTHX_ CodeFragment &code, OP *start, OP *final)
 {
   OP *o;
   /* Phase 1: just count the number of aux items we need
@@ -226,7 +256,7 @@ MY_compile_code(pTHX_ OP *start, OP *final)
           stack.pop_back();
           auto out = o->op_flags & OPf_STACKED ? raw_left : PadSv{o->op_targ};
           
-          std::cout << "sv_setnv(" << out << ", "
+          code << "sv_setnv(" << out << ", "
                     << left << " + " << right << ");\n";
           stack.emplace_back(out);
           //code.add_binop('+', stack, o);
@@ -237,7 +267,7 @@ MY_compile_code(pTHX_ OP *start, OP *final)
         croak("ARGH unsure how to optimize this op\n");
     }
 
-    if(o == final)
+    if (o == final)
       break;
   }
   if (DebugFlags(CCDebugFlags::DumpStack))
@@ -262,13 +292,11 @@ MY_compile_code(pTHX_ OP *start, OP *final)
 #endif
 }
 
-static void rpeep_for_callcompiled(pTHX_ OP *o, bool init_enabled);
-static void
+void rpeep_for_callcompiled(pTHX_ OP *o, bool init_enabled);
+void
 rpeep_for_callcompiled(pTHX_ OP *o, bool init_enabled)
 {
   bool enabled = init_enabled;
-
-  OP *prevo = NULL;
 
   /* In some cases (e.g.  while(1) { ... } ) the ->op_next chain actually
    * forms a closed loop. In order to detect this loop and break out we'll
@@ -276,7 +304,7 @@ rpeep_for_callcompiled(pTHX_ OP *o, bool init_enabled)
    * slowo then we have reached a cycle and should stop
    */
   OP *slowo = NULL;
-  int slowotick = 0;
+  //int slowotick = 0;
 
   size_t depth = 0;
   int count = 0;
@@ -288,8 +316,10 @@ rpeep_for_callcompiled(pTHX_ OP *o, bool init_enabled)
     if(o->op_type == OP_NEXTSTATE) {
       SV *sv = cop_hints_fetch_pvs(cCOPo, "Faster::Maths::CC/faster", 0);
       enabled = sv && sv != &PL_sv_placeholder && SvTRUE(sv);
-      if (first && oprev && count > 1)
+      if (first && oprev && count > 1) {
+        CodeFragment code;
         compile_code(code, first, oprev);
+      }
       first = o->op_next;
       count = 0;
       DEBUG_u( PerlIO_printf(PerlIO_stderr(), "nextstate %p line %d enabled %d\n",
@@ -343,8 +373,10 @@ rpeep_for_callcompiled(pTHX_ OP *o, bool init_enabled)
         break;
 
       default:
-        if (first && oprev && count > 1)
+        if (first && oprev && count > 1) {
+          CodeFragment code;
           compile_code(code, first, oprev);
+        }
         first = o->op_next;
         count = 0;
         break;
@@ -355,9 +387,9 @@ rpeep_for_callcompiled(pTHX_ OP *o, bool init_enabled)
   }
 }
 
-static void (*next_rpeepp)(pTHX_ OP *o);
+void (*next_rpeepp)(pTHX_ OP *o);
 
-static void
+void
 my_rpeepp(pTHX_ OP *o)
 {
   if(!o)
@@ -366,6 +398,8 @@ my_rpeepp(pTHX_ OP *o)
   (*next_rpeepp)(aTHX_ o);
 
   rpeep_for_callcompiled(aTHX_ o, false);
+}
+
 }
 
 MODULE = Faster::Maths::CC    PACKAGE = Faster::Maths::CC
