@@ -24,12 +24,15 @@ namespace {
 
 
 enum class CCDebugFlags {
-  DumpStack = 0x0001,
-  DumpCode  = 0x0002,
-  TraceOps  = 0x0004,
-  Failures  = 0x0008,
-  Register  = 0x0010,
-  Build     = 0x0020,
+  DumpStack = 0x0001,  // s - dump the stack while processing ops
+  DumpCode  = 0x0002,  // c - write code to stderr while generating
+  TraceOps  = 0x0004,  // o - display each op type while processing ops
+  Failures  = 0x0008,  // f - report any failures
+  Register  = 0x0010,  // r - report when the compiled code registers
+  Build     = 0x0020,  // b - print each step of the build process
+  Run       = 0x0040,  // R - report programs we run (Makerfile.PL, make)
+  Debug     = 0x0080,  // d - trace info mostly for debugging
+  TraceFrags = 0x0100, // F - trace calls to the generated code frags
 };
 
 using CCDebugBits = BitSet<CCDebugFlags>;
@@ -49,12 +52,15 @@ init_debug_flags() {
   if (env) {
     while (*env) {
       switch (*env) {
-      case 'c': DebugFlags |= CCDebugFlags::DumpCode;  break;
-      case 's': DebugFlags |= CCDebugFlags::DumpStack; break;
-      case 'o': DebugFlags |= CCDebugFlags::TraceOps;  break;
-      case 'f': DebugFlags |= CCDebugFlags::Failures;  break;
-      case 'r': DebugFlags |= CCDebugFlags::Register;  break;
-      case 'b': DebugFlags |= CCDebugFlags::Build;     break;
+      case 'c': DebugFlags |= CCDebugFlags::DumpCode;   break;
+      case 's': DebugFlags |= CCDebugFlags::DumpStack;  break;
+      case 'o': DebugFlags |= CCDebugFlags::TraceOps;   break;
+      case 'f': DebugFlags |= CCDebugFlags::Failures;   break;
+      case 'r': DebugFlags |= CCDebugFlags::Register;   break;
+      case 'b': DebugFlags |= CCDebugFlags::Build;      break;
+      case 'R': DebugFlags |= CCDebugFlags::Run;        break;
+      case 'd': DebugFlags |= CCDebugFlags::Debug;      break;
+      case 'F': DebugFlags |= CCDebugFlags::TraceFrags; break;
       }
       ++env;
     }
@@ -172,6 +178,8 @@ struct CodeFragment {
   const char *file = 0;
 };
 
+// I wanted to make the inserter below check the v was insertable
+// but got compilation failures and couldn't figure it out
 template <typename T>
 concept Insertable = requires (T a) {
   { std::declval<std::ostream>() << a };//->std::convertible_to<std::ostream &>;
@@ -186,42 +194,32 @@ operator <<(CodeFragment &os, auto const &v) {
   return os;
 }
 
-#if 0
-
-struct Code {
-  struct Entry {
-    std::string name;
-    std::vector<OP*> ops;
-    ostringstream code;
-  };
-
-  int index;
-  std::vector<Entry> Code;
-
-  void
-  add_binop(char type, Stack &stack, OP *o) {
-    auto left = stack.back(); // ugly, but std::stack is too
-    stack.pop_back();
-    auto right = stack.back();
-    stack.pop_back();
-    auto out = o->op_flags & OPf_STACKED ? left : PadSv{o->op_targ};
-
-    std::ostringstream s;
-    s << "sv_setnv(" << out << ", SvNV(" << left
-      << ") " << type << " SvNV(" << right << "));\n";
-    Code.emplace_back(Entry{std::string{1, type}, {}, s.str()});
-    std::cout << s.str() << std::endl;
-  }
-};
-
-#endif
-
 XOP xop_callcompiled;
-OP *pp_callcompiled(pTHX)
+
+OP *
+pp_callcompiled(pTHX)
 {
-  dSP;
-  abort(); // nothing yet
-  RETURN;
+  if (fragments == nullptr) {
+    if (DebugFlags(CCDebugFlags::Run))
+      std::cerr << "could not run " << (void*)PL_op << ": not generated\n";
+    return NORMAL; // use the old
+  }
+  UNOP_AUX_item *aux = cUNOP_AUX->op_aux;
+  UV index = aux->uv;
+  if (index >= fragment_count) {
+    if (DebugFlags(CCDebugFlags::Run))
+      std::cerr << "could not run " << (void*)PL_op
+                << ": high index " << index << "\n";
+    return NORMAL; // use the old
+  }
+
+  if (DebugFlags(CCDebugFlags::TraceFrags)) {
+    std::cerr << "calling fragment " << index << "\n";
+  }
+  fragments[index](aTHX);
+
+  // skip the old op tree
+  return OpSIBLING(PL_op)->op_next;
 }
 
 #if 0
@@ -239,19 +237,20 @@ add_code(pTHX_ const char *name, SV *out) {
 
 #endif
 
-OP *
-code_finalize(pTHX_ CodeFragment &code, Stack &stack, OP *o) {
+void
+code_finalize(pTHX_ CodeFragment &code, Stack &stack, OP *start, OP *final) {
   // no result?
   if (stack.size() != 1) {
     if (DebugFlags(CCDebugFlags::Failures)) {
       std::cerr << "Failed to finalize " << stack.size() << " values left on stack\n";
     }
-    return o;
+    return;
   }
   auto top = stack.back();
   stack.pop_back();
   // this may need to change
-  code << "rpp_xpush_IMM(" << top << ");\n";
+  code << "rpp_extend(1);\n";
+  code << "rpp_push_1(" << top << ");\n";
 
   IV index = CodeIndex++;
   SV *out = Perl_newSVpvf(aTHX_ "static void\nf%" UVf "(pTHX) {\n", index);
@@ -268,12 +267,40 @@ code_finalize(pTHX_ CodeFragment &code, Stack &stack, OP *o) {
   AV *collection = get_av("Faster::Maths::CC::collection", GV_ADD);
   av_store(collection, index, newRV_noinc((SV*)entry));
 
-  return o;
+  // we don't really need an UNOP_AUX yet, but I expect we will later
+  UNOP_AUX_item *aux;
+  Newx(aux, 1, UNOP_AUX_item);
+  aux->iv = index;
+  OP *retop = newUNOP_AUX(OP_CUSTOM, 0, NULL, aux);
+
+  // we want this between the final and it's previous sibling
+  retop->op_ppaddr = &pp_callcompiled;
+  retop->op_next = start;
+
+  OP *parent = op_parent(final);
+  OP *oprev = NULL;
+  assert(parent->op_flags & OPf_KIDS); // if not, how did we get here?
+  OP *o = cUNOPx(parent)->op_first;
+  while (o != NULL && o != final) {
+    oprev = o;
+    o = OpSIBLING(o);
+  }
+  assert(o); // we must find "final"
+  assert(oprev == nullptr || oprev->op_next == start);
+  if (DebugFlags(CCDebugFlags::Debug)) {
+    std::cerr << "insertion parent " << (void*)parent
+              << " after " << (void *)oprev
+              << " start " << (void *)start
+              << " final " << (void *)final << "\n";
+  }
+
+  op_sibling_splice(parent, oprev, 0, retop);
+  oprev->op_next = retop;
 }
 
 #define compile_code(code, start, final) \
   MY_compile_code(aTHX_ code, start, final)
-OP *
+void
 MY_compile_code(pTHX_ CodeFragment &code, OP *start, OP *final)
 {
   OP *o;
@@ -283,6 +310,7 @@ MY_compile_code(pTHX_ CodeFragment &code, OP *start, OP *final)
    */
 
   Stack stack;
+  OP *oprev = NULL;
   for(o = start; o; o = o->op_next) {
     if (DebugFlags(CCDebugFlags::DumpStack))
       std::cerr << "Stack: " << stack << "\n";
@@ -316,14 +344,15 @@ MY_compile_code(pTHX_ CodeFragment &code, OP *start, OP *final)
       default:
         croak("ARGH unsure how to optimize this op\n");
     }
-
+    oprev = o;
     if (o == final)
       break;
   }
   if (DebugFlags(CCDebugFlags::DumpStack))
     std::cerr << "Stack: " << stack << "\n";
 
-  return code_finalize(aTHX_ code, stack, o);
+  code_finalize(aTHX_ code, stack, start, oprev);
+  return;
   //return o;
 
 #if 0
@@ -478,3 +507,4 @@ BOOT:
   Perl_custom_op_register(aTHX_ &pp_callcompiled, &xop_callcompiled);
   (void) hv_stores(PL_modglobal, "Faster::Maths::CC::register",
                             newSViv(PTR2IV(register_fragments)));
+  // FIXME: hook PL_opfreehook to clean up aux items

@@ -28,7 +28,7 @@ sub unimport
    $^H{"Faster::Maths::CC/faster"} = 0;
  }
 
-my sub Debug {
+my sub DebugFlags {
   my $key = shift;
   my $env = $ENV{PERL_MFC_DEBUG}
     or return;
@@ -48,7 +48,7 @@ my sub save_file {
 my sub run {
   my $cmd = shift;
 
-  unless (Debug("x")) {
+  unless (DebugFlags("x")) {
     $cmd .= " >" . File::Spec->devnull . " 2>&1";
   }
   return system $cmd;
@@ -155,7 +155,7 @@ CHECK {
   my $olddir = Cwd::getcwd();
   chdir $dir
     or die "Cannot chdir $dir: $!\n";
-  my $debug_b = Debug("b");
+  my $debug_b = DebugFlags("b");
   print STDERR "Makefile.PL:\n"
     if $debug_b;
   run("$^X Makefile.PL")
