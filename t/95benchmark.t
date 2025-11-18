@@ -5,12 +5,6 @@ use warnings;
 
 use Test::More;
 
-ok(1);
-done_testing();
-
-# not ready to do this yet
-exit;
-
 # This "test" never fails, but prints a benchmark comparison between two
 # mathematically-identical functions, one with Faster::Maths and one without
 
@@ -65,7 +59,7 @@ my $faster_elapsed   = 0;
 # To reduce the influence of bursts of timing noise, interleave many small runs
 # of each type.
 
-my $COUNT = 300;
+my $COUNT = 1000;
 
 foreach ( 1 .. 20 ) {
    $standard_elapsed += measure {
@@ -90,6 +84,8 @@ else {
    my $speedup = ( $standard_elapsed - $faster_elapsed ) / $standard_elapsed;
    diag( sprintf "Standard took %.3fsec, this was %d%% faster at %.3fsec",
       $standard_elapsed, $speedup * 100, $faster_elapsed );
-}
+ }
+
+ok(@Faster::Maths::CC::collection, "we compiled something");
 
 done_testing;

@@ -176,6 +176,12 @@ struct CodeFragment {
   //CodeResult result;
   line_t line = 0;
   const char *file = 0;
+
+  // don't allow copying or moving, though this may change
+  CodeFragment(CodeFragment const &) = delete;
+  CodeFragment(CodeFragment &&) = delete;
+  CodeFragment &operator=(CodeFragment const &) = delete;
+  CodeFragment &operator=(CodeFragment &&) = delete;
 };
 
 // I wanted to make the inserter below check the v was insertable
@@ -222,32 +228,19 @@ pp_callcompiled(pTHX)
   return OpSIBLING(PL_op)->op_next;
 }
 
-#if 0
-
-void
-add_code(pTHX_ const char *name, SV *out) {
-  HV *code_hv = get_hv("Faster::Maths::CC::code", 0);
-  assert(code_hv);
-  SV **code_sv = hv_fetch(code_hv, name, strlen(name), 0);
-  if (!code_sv)
-    Perl_croak(aTHX_ "Cannot find code %s", name);
-
-  sv_catsv(out, *code_sv);
-}
-
-#endif
-
 void
 code_finalize(pTHX_ CodeFragment &code, Stack &stack, OP *start, OP *final) {
   // no result?
   if (stack.size() != 1) {
     if (DebugFlags(CCDebugFlags::Failures)) {
-      std::cerr << "Failed to finalize " << stack.size() << " values left on stack\n";
+      std::cerr << "Failed to finalize " << stack.size()
+                << " values left on stack\n";
     }
     return;
   }
   auto top = stack.back();
   stack.pop_back();
+  
   // this may need to change
   code << "rpp_extend(1);\n";
   code << "rpp_push_1(" << top << ");\n";
@@ -298,6 +291,20 @@ code_finalize(pTHX_ CodeFragment &code, Stack &stack, OP *start, OP *final) {
   oprev->op_next = retop;
 }
 
+void
+add_binop(OP *o, CodeFragment &code, Stack &stack, std::string_view opname) {
+  auto right = as_number(stack.back());
+  stack.pop_back();
+  auto raw_left = stack.back();
+  auto left = as_number(raw_left);
+  stack.pop_back();
+  auto out = o->op_flags & OPf_STACKED ? raw_left : PadSv{o->op_targ};
+
+  code << "sv_setnv(" << out << ", "
+       << left << ' ' << opname << " " << right << ");\n";
+  stack.emplace_back(out);
+}
+
 #define compile_code(code, start, final) \
   MY_compile_code(aTHX_ code, start, final)
 void
@@ -326,19 +333,19 @@ MY_compile_code(pTHX_ CodeFragment &code, OP *start, OP *final)
         break;
 
       case OP_ADD:
-        {
-          auto right = as_number(stack.back());
-          stack.pop_back();
-          auto raw_left = stack.back();
-          auto left = as_number(raw_left);
-          stack.pop_back();
-          auto out = o->op_flags & OPf_STACKED ? raw_left : PadSv{o->op_targ};
-          
-          code << "sv_setnv(" << out << ", "
-                    << left << " + " << right << ");\n";
-          stack.emplace_back(out);
-          //code.add_binop('+', stack, o);
-        }
+        add_binop(o, code, stack, "+");
+        break;
+
+      case OP_SUBTRACT:
+        add_binop(o, code, stack, "-");
+        break;
+
+      case OP_MULTIPLY:
+        add_binop(o, code, stack, "*");
+        break;
+
+      case OP_DIVIDE:
+        add_binop(o, code, stack, "/");
         break;
 
       default:
@@ -404,8 +411,8 @@ rpeep_for_callcompiled(pTHX_ OP *o, bool init_enabled)
       last_cop = (const COP *)last_cop;
       first = o->op_next;
       count = 0;
-      DEBUG_u( PerlIO_printf(PerlIO_stderr(), "nextstate %p line %d enabled %d\n",
-                             o, CopLINE(cCOPo), enabled) );
+      DEBUG_u( PerlIO_printf(PerlIO_stderr(), "nextstate %p file %s line %d enabled %d\n",
+                             o, CopFILE(cCOPo), CopLINE(cCOPo), enabled) );
     }
     if (enabled) {
       DEBUG_u( PerlIO_printf(PerlIO_stderr(), "op %d (%s) depth %zu count %d\n",

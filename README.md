@@ -5,11 +5,12 @@ and call that instead of the OPs.
 
 Or that's the idea.
 
-Currently it just dumps code to STDOUT, along with some debug
-information and only for the add op.
+Currently it only handles addition and always works in floating point
+and I'm sure it's broken in many ways.  In fact it is, the expressions
+in the Faster::Maths test code aren't being replace at all.
 
-Any tests are leftover from Faster::Maths which I started from and
-greatly mangled, don't expect them to pass. (currently not committed)
+Some tests from Faster::Maths still run, but most are commented out
+and they don't seem to be triggering the compilation.
 
 Requires a modern C++ compiler to build and uses fairly modern C++
 features, though probably badly, and I don't plan to change this,
@@ -53,27 +54,20 @@ Some thoughts:
 - caching, yay
 
 ```
-$ PERL_MFC_DEBUG=c ~/perl/v5.42.0-debug/bin/perl -Mblib -MFaster::Maths::CC -e 'my ($x, $y, $z); $z = 2 + $x + $y + 1'
-sv_setnv(PAD_SV(4), 2 + SvNV(PAD_SV(1) /* $x */));
-sv_setnv(PAD_SV(5), SvNV(PAD_SV(4)) + SvNV(PAD_SV(2) /* $y */));
-sv_setnv(PAD_SV(3) /* $z */, SvNV(PAD_SV(5)) + 1);
-$ PERL_MFC_DEBUG=cos ~/perl/v5.42.0-debug/bin/perl -Mblib -MFaster::Maths::CC -e 'my ($x, $y, $z); $z = 2 + $x + $y + 1'
+$ PERL_MFC_DEBUG=csF ~/perl/v5.42.0-debug/bin/perl -Mblib -e ' { use Faster::Maths::CC; my ($x, $y, $z); $z = 2 + $x + $y + 1; print "$z\n" }' 
 Stack: 
-Op: const
-Stack: SomeSV /* 0x5592ca6fa800 */ 
-Op: padsv
-Stack: SomeSV /* 0x5592ca6fa800 */ PAD_SV(1) /* $x */ 
-Op: add
+Stack: SomeSV /* 0x55ea85b93800 */ 
+Stack: SomeSV /* 0x55ea85b93800 */ PAD_SV(1) /* $x */ 
 sv_setnv(PAD_SV(4), 2 + SvNV(PAD_SV(1) /* $x */));
 Stack: PAD_SV(4) 
-Op: padsv
 Stack: PAD_SV(4) PAD_SV(2) /* $y */ 
-Op: add
 sv_setnv(PAD_SV(5), SvNV(PAD_SV(4)) + SvNV(PAD_SV(2) /* $y */));
 Stack: PAD_SV(5) 
-Op: const
-Stack: PAD_SV(5) SomeSV /* 0x5592ca728558 */ 
-Op: add
+Stack: PAD_SV(5) SomeSV /* 0x55ea85bc14d8 */ 
 sv_setnv(PAD_SV(3) /* $z */, SvNV(PAD_SV(5)) + 1);
-Stack: PAD_SV(3) /* $z */
+Stack: PAD_SV(3) /* $z */ 
+rpp_extend(1);
+rpp_push_1(PAD_SV(3) /* $z */);
+calling fragment 0
+3
 ```
