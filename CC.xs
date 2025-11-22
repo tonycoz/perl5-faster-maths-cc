@@ -411,6 +411,7 @@ rpeep_for_callcompiled(pTHX_ OP *o, bool init_enabled)
       last_cop = (const COP *)last_cop;
       first = o->op_next;
       count = 0;
+      depth = 0;
       DEBUG_u( PerlIO_printf(PerlIO_stderr(), "nextstate %p file %s line %d enabled %d\n",
                              o, CopFILE(cCOPo), CopLINE(cCOPo), enabled) );
     }
