@@ -615,6 +615,17 @@ my_rpeepp(pTHX_ OP *o)
   rpeep_for_callcompiled(aTHX_ o, false);
 }
 
+#ifdef XOPf_xop_dump
+static void
+my_xop_dump(pTHX_ const OP *o, struct Perl_OpDumpContext *ctx) {
+  UNOP_AUX_item *aux = cUNOP_AUXo->op_aux;
+
+  Perl_opdump_printf(aTHX_ ctx, "INDEX = %" UVuf "\n", aux[0].uv);
+  Perl_opdump_printf(aTHX_ ctx, "OTHEROP = 0x%p\n", (void*)aux[1].pv);
+}
+#endif
+
+
 }
 
 void
@@ -637,6 +648,9 @@ BOOT:
   XopENTRY_set(&xop_callcompiled, xop_desc,
     "call into C compiled code generated from the OP tree");
   XopENTRY_set(&xop_callcompiled, xop_class, OA_UNOP_AUX);
+#ifdef XOPf_xop_dump
+  XopENTRY_set(&xop_callcompiled, xop_dump, my_xop_dump);
+#endif
   Perl_custom_op_register(aTHX_ &pp_callcompiled, &xop_callcompiled);
   (void) hv_stores(PL_modglobal, "Faster::Maths::CC::register",
                             newSViv(PTR2IV(register_fragments)));
