@@ -30,7 +30,7 @@ sub unimport
 
 my sub DebugFlags {
   my $key = shift;
-  my $env = $ENV{PERL_MFC_DEBUG}
+  my $env = $ENV{PERL_FMC_DEBUG}
     or return;
   return index($env, $key) >= 0;
 }
@@ -68,7 +68,7 @@ sub make_xs {
 #include "XSUB.h"
 #include "ppport.h"
 
-typedef void (*fragment_handler)(pTHX);
+typedef void (*fragment_handler)(pTHX_ const UNOP_AUX_item *aux);
 
 EOS
   for my $entry (@collection) {
@@ -133,17 +133,20 @@ EOS
   
 }
 
+my $build_dir;
+
 CHECK {
   my $module = "Faster::Maths::CC::Compiled";
   (my $base = $module) =~ s/.*:://;
 
   my $code = make_xs($module);
   my $cleanup = !$ENV{PERL_FMC_KEEP};
-  my $dir = File::Temp->newdir(CLEANUP => $cleanup);
-  my $mfpl = "$dir/Makefile.PL";
-  my $pm = "$dir/$base.pm";
-  my $xs = "$dir/$base.xs";
-  my $ppport = "$dir/ppport.h";
+  $build_dir = File::Temp->newdir(CLEANUP => $cleanup);
+  print STDERR "Build $build_dir\n" unless $cleanup;
+  my $mfpl = "$build_dir/Makefile.PL";
+  my $pm = "$build_dir/$base.pm";
+  my $xs = "$build_dir/$base.xs";
+  my $ppport = "$build_dir/ppport.h";
 
   # generate the dist files
   save_file($xs, make_xs($module));
@@ -153,23 +156,28 @@ CHECK {
 
   # build it
   my $olddir = Cwd::getcwd();
-  chdir $dir
-    or die "Cannot chdir $dir: $!\n";
+  chdir $build_dir
+    or die "Cannot chdir $build_dir: $!\n";
   my $debug_b = DebugFlags("b");
-  print STDERR "Makefile.PL:\n"
-    if $debug_b;
-  run("$^X Makefile.PL")
-    and die "Cannot run Makefile.PL\n";
-  print STDERR "make:\n"
-    if $debug_b;
-  run("make")
-    and die "Cannot run make\n";
+  my $ok = eval {
+    print STDERR "Makefile.PL:\n"
+      if $debug_b;
+    my $mkpl_opts = $ENV{PERL_FMC_MAKEFILEPL} // "";
+    run("$^X Makefile.PL $mkpl_opts")
+      and die "Cannot run Makefile.PL\n";
+    print STDERR "make:\n"
+      if $debug_b;
+    run("make")
+      and die "Cannot run make\n";
+    1;
+    };
   chdir $olddir
     or die "Cannot return to $olddir: $!\n";
+  $@ and die "Failed build in $build_dir: $@\n";
 
   print STDERR "Loading:\n"
     if $debug_b;
-  blib->import($dir);
+  blib->import($build_dir);
   require Faster::Maths::CC::Compiled;
 }
 

@@ -33,6 +33,7 @@ enum class CCDebugFlags {
   Run       = 0x0040,  // R - report programs we run (Makerfile.PL, make)
   Debug     = 0x0080,  // d - trace info mostly for debugging
   TraceFrags = 0x0100, // F - trace calls to the generated code frags
+  NoReplace = 0x0200,  // n - don't replace the OPs
 };
 
 using CCDebugBits = BitSet<CCDebugFlags>;
@@ -41,14 +42,14 @@ CCDebugBits DebugFlags;
 
 IV CodeIndex;
 
-typedef void (*fragment_handler)(pTHX);
+typedef void (*fragment_handler)(pTHX_ const UNOP_AUX_item *aux);
 
 const fragment_handler *fragments;
 size_t fragment_count;
 
 void
 init_debug_flags() {
-  const char *env = getenv("PERL_MFC_DEBUG");
+  const char *env = getenv("PERL_FMC_DEBUG");
   if (env) {
     while (*env) {
       switch (*env) {
@@ -61,6 +62,7 @@ init_debug_flags() {
       case 'R': DebugFlags |= CCDebugFlags::Run;        break;
       case 'd': DebugFlags |= CCDebugFlags::Debug;      break;
       case 'F': DebugFlags |= CCDebugFlags::TraceFrags; break;
+      case 'n': DebugFlags |= CCDebugFlags::NoReplace;  break;
       }
       ++env;
     }
@@ -71,17 +73,40 @@ struct PadSv {
   PADOFFSET index = 0;
 };
 
-struct ConstSv {
-  SV *sv = nullptr;
+struct ConstPadSv {
+  PADOFFSET index = 0;
 };
 
-using ArgType = std::variant<PadSv, ConstSv>;
+struct OpConst {
+  size_t op_index = ~0z;
+  OP *op;
+};
+
+using ArgType = std::variant<PadSv, ConstPadSv, OpConst>;
 
 struct RawNumber {
   NV num = 0.0;
 };
 
 using NumArg = std::variant<ArgType, RawNumber>;
+
+NumArg
+as_number(const OpConst &csv) {
+  SV *sv = cSVOPx_sv(csv.op);
+  return NumArg{RawNumber{SvNV(sv)}};
+}
+
+NumArg
+as_number(const PadSv &psv) {
+  SV *sv = PAD_SV(psv.index);
+  return SvREADONLY(sv) ? NumArg{RawNumber{SvNV(sv)}} : NumArg(psv);
+}
+
+NumArg
+as_number(const ConstPadSv &psv) {
+  SV *sv = PAD_SV(psv.index);
+  return NumArg{RawNumber{SvNV(sv)}};
+}
 
 // a result returned from a code fragment
 struct CodeResult {
@@ -99,13 +124,7 @@ NumArg
 as_number(const ArgType &arg) {
   //NumArg result;
   return
-    std::visit(overloaded {
-        [&](const ConstSv &sv) { return NumArg{RawNumber{SvNV(sv.sv)}}; },
-        [&](const PadSv &psv) {
-          SV *sv = PAD_SV(psv.index);
-          return SvREADONLY(sv) ? NumArg{RawNumber{SvNV(sv)}} : NumArg(arg);
-        }
-      }, arg);
+    std::visit([](const auto &val){ return as_number(val); }, arg);
 }
 
 using Stack = std::vector<ArgType>;
@@ -123,9 +142,70 @@ operator <<(std::ostream &out, const PadSv &psv) {
   return out;
 }
 
+#if 0
 std::ostream &
 operator <<(std::ostream &out, const ConstSv &psv) {
   out << "SomeSV /* " << (void *)psv.sv << " */";
+  return out;
+}
+#endif
+
+  void
+  sv_summary(std::ostream &out, SV *sv) {
+    if (SvGMAGICAL(sv)) {
+      out << "GMAGICAL";
+    }
+    else if (!SvOK(sv)) {
+      out << "undef";
+    }
+    else if (SvIOK(sv)) {
+      out << SvIVX(sv);
+    }
+    else if (SvNOK(sv)) {
+      out << SvNVX(sv);
+    }
+    else if (SvPOK(sv)) {
+      out << '"';
+      STRLEN len;
+      const char *pv = SvPV(sv, len);
+      bool dots = false;
+      if (len > 13) {
+        len = 10;
+        dots = true;
+      }
+      const char *end = pv+len;
+      for (; pv < end; ++pv) {
+        if (*pv >= ' ' && *pv <= '~' && *pv != '/') {
+          out << *pv;
+        }
+        else {
+          dots = true;
+          break;
+        }
+      }
+      if (dots) out << "...";
+      out << '"';
+    }
+    else if (SvROK(sv)) {
+      out << "REF";
+    }
+    else {
+      out << "something...";
+    }
+  }
+
+std::ostream &
+operator <<(std::ostream &out, const OpConst &psv) {
+#ifdef USE_ITHREADS
+  out << "PAD_SV(((OP*)aux[" << psv.op_index << "].pv)->op_targ)";
+#else
+  out << "cSVOPx_sv((OP*)aux[" << psv.op_index << "].pv)";
+#endif
+  /* at compile time it is still an OP_CONST either way */
+  SV *sv = cSVOPx_sv(psv.op);
+  out << "/* ";
+  sv_summary(out, sv);
+  out << " */ ";
   return out;
 }
 
@@ -168,11 +248,20 @@ operator <<(std::ostream &out, const Stack &s) {
 
 /* Used to generate code for an op tree fragment */
 struct CodeFragment {
-  CodeFragment(const COP *cop):
+  CodeFragment(const COP *cop, OP *next_op):
     line(CopLINE(cop)), file(CopFILE(cop)) {
+    ops.push_back(next_op);
   }
+#undef save_op
+  OpConst
+  save_op(OP *op) {
+    size_t index = 1 + ops.size();
+    ops.push_back(op);
+    return OpConst{index, op};
+  }
+
   std::ostringstream code;
-  //std::vector<OP*> ops;
+  std::vector<OP*> ops;
   //CodeResult result;
   line_t line = 0;
   const char *file = 0;
@@ -186,10 +275,10 @@ struct CodeFragment {
 
 // I wanted to make the inserter below check the v was insertable
 // but got compilation failures and couldn't figure it out
-template <typename T>
-concept Insertable = requires (T a) {
-  { std::declval<std::ostream>() << a };//->std::convertible_to<std::ostream &>;
-};
+//template <typename T>
+//concept Insertable = requires (T a) {
+//  { std::declval<std::ostream>() << a };//->std::convertible_to<std::ostream &>;
+//};
 
 //template <Insertable Val>
 CodeFragment &
@@ -210,8 +299,8 @@ pp_callcompiled(pTHX)
       std::cerr << "could not run " << (void*)PL_op << ": not generated\n";
     return NORMAL; // use the old
   }
-  UNOP_AUX_item *aux = cUNOP_AUX->op_aux;
-  UV index = aux->uv;
+  const UNOP_AUX_item *aux = cUNOP_AUX->op_aux;
+  UV index = aux[0].uv;
   if (index >= fragment_count) {
     if (DebugFlags(CCDebugFlags::Run))
       std::cerr << "could not run " << (void*)PL_op
@@ -222,31 +311,31 @@ pp_callcompiled(pTHX)
   if (DebugFlags(CCDebugFlags::TraceFrags)) {
     std::cerr << "calling fragment " << index << "\n";
   }
-  fragments[index](aTHX);
+  fragments[index](aTHX_ aux);
 
   // skip the old op tree
-  return OpSIBLING(PL_op)->op_next;
+  return (OP*)aux[1].pv; // umm
 }
 
 void
-code_finalize(pTHX_ CodeFragment &code, Stack &stack, OP *start, OP *final) {
+code_finalize(pTHX_ CodeFragment &code, Stack &stack, OP *start,
+              OP *final, OP *prev) {
   // no result?
-  if (stack.size() != 1) {
+  if (stack.size() == 0) {
     if (DebugFlags(CCDebugFlags::Failures)) {
-      std::cerr << "Failed to finalize " << stack.size()
-                << " values left on stack\n";
+      std::cerr << "Failed to finalize: stack empty\n";
     }
     return;
   }
-  auto top = stack.back();
-  stack.pop_back();
-  
-  // this may need to change
-  code << "rpp_extend(1);\n";
-  code << "rpp_push_1(" << top << ");\n";
+  code << "rpp_extend(" << stack.size() << ");\n";
+  for (auto item : stack) {
+    // this may need to change
+    code << "rpp_push_1(" << item << ");\n";
+  }
 
   IV index = CodeIndex++;
-  SV *out = Perl_newSVpvf(aTHX_ "static void\nf%" UVf "(pTHX) {\n", index);
+  SV *out = Perl_newSVpvf(aTHX_ "static void\nf%" UVf "(pTHX, "
+                          "const UNOP_AUX_item *aux) {\n", index);
   std::string codestring = code.code.str();
   sv_catpvn(out, codestring.c_str(), codestring.size());
   sv_catpvs(out, "}\n");
@@ -260,10 +349,21 @@ code_finalize(pTHX_ CodeFragment &code, Stack &stack, OP *start, OP *final) {
   AV *collection = get_av("Faster::Maths::CC::collection", GV_ADD);
   av_store(collection, index, newRV_noinc((SV*)entry));
 
+  if (DebugFlags(CCDebugFlags::NoReplace)) {
+    std::cerr << "Skipping OP replacement\n";
+    return;
+  }
+  if (DebugFlags(CCDebugFlags::Debug))
+    std::cerr << "Performing OP replacement\n";
+
   // we don't really need an UNOP_AUX yet, but I expect we will later
   UNOP_AUX_item *aux;
-  Newx(aux, 1, UNOP_AUX_item);
-  aux->iv = index;
+  Newx(aux, 1+code.ops.size(), UNOP_AUX_item);
+  aux[0].iv = index;
+  size_t op_index = 1;
+  for (auto op : code.ops) {
+    aux[op_index++].pv = (char *)op; // booo!
+  }
   OP *retop = newUNOP_AUX(OP_CUSTOM, 0, NULL, aux);
 
   // we want this between the final and it's previous sibling
@@ -279,7 +379,12 @@ code_finalize(pTHX_ CodeFragment &code, Stack &stack, OP *start, OP *final) {
     o = OpSIBLING(o);
   }
   assert(o); // we must find "final"
-  assert(oprev == nullptr || oprev->op_next == start);
+  if (DebugFlags(CCDebugFlags::Debug))
+    std::cerr << "finalize oprev " << oprev
+              << " next " << (oprev ? (void *)oprev->op_next : nullptr)
+              << " start " << (void *)start
+              << " prev " << (void *)prev << "\n";
+  //  assert(oprev == nullptr || oprev->op_next == start);
   if (DebugFlags(CCDebugFlags::Debug)) {
     std::cerr << "insertion parent " << (void*)parent
               << " after " << (void *)oprev
@@ -287,8 +392,8 @@ code_finalize(pTHX_ CodeFragment &code, Stack &stack, OP *start, OP *final) {
               << " final " << (void *)final << "\n";
   }
 
-  op_sibling_splice(parent, oprev, 0, retop);
-  oprev->op_next = retop;
+  op_sibling_splice(parent, prev, 0, retop);
+  prev->op_next = retop;
 }
 
 void
@@ -305,10 +410,10 @@ add_binop(OP *o, CodeFragment &code, Stack &stack, std::string_view opname) {
   stack.emplace_back(out);
 }
 
-#define compile_code(code, start, final) \
-  MY_compile_code(aTHX_ code, start, final)
+#define compile_code(code, start, final, prev)               \
+  MY_compile_code(aTHX_ code, start, final, prev)
 void
-MY_compile_code(pTHX_ CodeFragment &code, OP *start, OP *final)
+MY_compile_code(pTHX_ CodeFragment &code, OP *start, OP *final, OP *prev)
 {
   OP *o;
   /* Phase 1: just count the number of aux items we need
@@ -319,13 +424,15 @@ MY_compile_code(pTHX_ CodeFragment &code, OP *start, OP *final)
   Stack stack;
   OP *oprev = NULL;
   for(o = start; o; o = o->op_next) {
+    if (DebugFlags(CCDebugFlags::TraceOps)) {
+    }
     if (DebugFlags(CCDebugFlags::DumpStack))
       std::cerr << "Stack: " << stack << "\n";
     if (DebugFlags(CCDebugFlags::TraceOps))
       std::cerr << "Op: " << OP_NAME(o) << "\n";
     switch(o->op_type) {
       case OP_CONST:
-        stack.emplace_back(ConstSv{cSVOPo->op_sv});
+        stack.emplace_back(code.save_op(o));
         break;
 
       case OP_PADSV:
@@ -358,7 +465,7 @@ MY_compile_code(pTHX_ CodeFragment &code, OP *start, OP *final)
   if (DebugFlags(CCDebugFlags::DumpStack))
     std::cerr << "Stack: " << stack << "\n";
 
-  code_finalize(aTHX_ code, stack, start, oprev);
+  code_finalize(aTHX_ code, stack, start, oprev, prev);
   return;
   //return o;
 
@@ -396,6 +503,7 @@ rpeep_for_callcompiled(pTHX_ OP *o, bool init_enabled)
   size_t depth = 0;
   int count = 0;
   OP *first = NULL;
+  OP *firstprev = NULL;
   OP *oprev = NULL;
   const COP *last_cop = PL_curcop;
   DEBUG_u( PerlIO_printf(PerlIO_stderr(), "rpeep enabled %d\n",
@@ -405,10 +513,20 @@ rpeep_for_callcompiled(pTHX_ OP *o, bool init_enabled)
       SV *sv = cop_hints_fetch_pvs(cCOPo, "Faster::Maths::CC/faster", 0);
       enabled = sv && sv != &PL_sv_placeholder && SvTRUE(sv);
       if (first && oprev && count > 1) {
-        CodeFragment code{last_cop};
-        compile_code(code, first, oprev);
+        if (DebugFlags(CCDebugFlags::Debug)) {
+          std::cerr << "Trace: calling code gen\n";
+        }
+        CodeFragment code{last_cop, o};
+        compile_code(code, first, oprev, firstprev);
       }
-      last_cop = (const COP *)last_cop;
+      else if (DebugFlags(CCDebugFlags::Debug)) {
+        std::cerr << "Trace: skipped code gen first "
+                  << (void *)first
+                  << " oprev " << (void *)oprev
+                  << " count " << count << "\n";
+      }
+      last_cop = (const COP *)o;
+      firstprev = o;
       first = o->op_next;
       count = 0;
       depth = 0;
@@ -416,8 +534,8 @@ rpeep_for_callcompiled(pTHX_ OP *o, bool init_enabled)
                              o, CopFILE(cCOPo), CopLINE(cCOPo), enabled) );
     }
     if (enabled) {
-      DEBUG_u( PerlIO_printf(PerlIO_stderr(), "op %d (%s) depth %zu count %d\n",
-                             o->op_type, OP_NAME(o), depth, count) );
+      DEBUG_u( PerlIO_printf(PerlIO_stderr(), "scan op %d (%s %p) depth %zu count %d prev %p\n",
+                             o->op_type, OP_NAME(o), (void *)o, depth, count, (void *)oprev) );
       switch(o->op_type) {
       case OP_CONST:
       case OP_PADSV:
@@ -425,16 +543,11 @@ rpeep_for_callcompiled(pTHX_ OP *o, bool init_enabled)
         break;
 
       case OP_ADD:
-        if (o->op_flags & OPf_STACKED)
-          ++depth; // left arg on stack (OP= operator)
-        if (depth >= 2) {
-          ++count;
-          --depth;
-        }
-        else {
-          depth = 0;
-          first = NULL;
-        }
+      case OP_SUBTRACT:
+      case OP_MULTIPLY:
+      case OP_DIVIDE:
+         --depth;
+         ++count;
         break;
 
       case OP_OR:
@@ -463,10 +576,22 @@ rpeep_for_callcompiled(pTHX_ OP *o, bool init_enabled)
         break;
 
       default:
+        if (DebugFlags(CCDebugFlags::Debug))
+          std::cerr << "Trace: unrecognized op\n";
         if (first && oprev && count > 1) {
-          CodeFragment code {last_cop};
-          compile_code(code, first, oprev);
+          if (DebugFlags(CCDebugFlags::Debug)) {
+            std::cerr << "Trace: calling code gen\n";
+          }
+          CodeFragment code {last_cop, o};
+          compile_code(code, first, oprev, firstprev);
         }
+        else if (DebugFlags(CCDebugFlags::Debug)) {
+          std::cerr << "Trace: skipped code gen first "
+                    << (void *)first
+                    << " oprev " << (void *)oprev
+                    << " count " << count << "\n";
+        }
+        firstprev = o;
         first = o->op_next;
         count = 0;
         break;
