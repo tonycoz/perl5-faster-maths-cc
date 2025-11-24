@@ -9,8 +9,18 @@ Currently it only handles addition and always works in floating point
 and I'm sure it's broken in many ways.  In fact it is, the expressions
 in the Faster::Maths test code aren't being replace at all.
 
-Some tests from Faster::Maths still run, but most are commented out
-and they don't seem to be triggering the compilation.
+Some tests from Faster::Maths still run and code is being compiled to
+C.  This isn't especially fast since I still put intermediate results
+into SVs, but under the right conditions:
+
+```
+no overloading;
+use Faster::Maths::CC "float";
+... code here ...
+```
+
+it should be possible the optimize the code into fairly pure floating
+point code when applicable, but this hasn't happened yet.
 
 Requires a modern C++ compiler to build and uses fairly modern C++
 features, though probably badly, and I don't plan to change this,
