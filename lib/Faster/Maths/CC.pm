@@ -54,23 +54,14 @@ my sub run {
   return system $cmd;
 }
 
+my $xs_top = do { local $/; <DATA> };
+
 sub make_xs {
   my ($module) = @_;
 
   our @collection;
 
-  my $code = <<'EOS';
-/* generated code */
-#define PERL_NO_GET_CONTEXT
-
-#include "EXTERN.h"
-#include "perl.h"
-#include "XSUB.h"
-#include "ppport.h"
-
-typedef void (*fragment_handler)(pTHX_ const UNOP_AUX_item *aux);
-
-EOS
+  my $code = $xs_top;
   for my $entry (@collection) {
     $code .= "// $entry->[3]:$entry->[2]\n";
     $code .= $entry->[0];
@@ -227,3 +218,15 @@ Paul Evans <leonerd@leonerd.org.uk>
 =cut
 
 0x55AA;
+
+__DATA__
+/* generated code */
+#define PERL_NO_GET_CONTEXT
+
+#include "EXTERN.h"
+#include "perl.h"
+#include "XSUB.h"
+#include "ppport.h"
+
+typedef void (*fragment_handler)(pTHX_ const UNOP_AUX_item *aux);
+
