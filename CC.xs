@@ -654,7 +654,8 @@ my_rpeepp(pTHX_ OP *o)
 
   (*next_rpeepp)(aTHX_ o);
 
-  rpeep_for_callcompiled(aTHX_ o, false);
+  if (!fragments)
+    rpeep_for_callcompiled(aTHX_ o, false);
 }
 
 #ifdef XOPf_xop_dump
