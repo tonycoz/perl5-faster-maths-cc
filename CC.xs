@@ -447,7 +447,9 @@ add_binop(OP *o, CodeFragment &code, Stack &stack, std::string_view opname) {
 
   code << "sv_setnv(" << out << ", "
        << left << ' ' << opname << " " << right << ");\n";
-  stack.emplace_back(out);
+  // only push a result if non-void
+  if (OP_GIMME(o, OPf_WANT_SCALAR) != OPf_WANT_VOID)
+    stack.emplace_back(out);
 }
 
 #define compile_code(code, start, final, prev)               \
