@@ -335,14 +335,14 @@ OP *
 pp_callcompiled(pTHX)
 {
   if (fragments == nullptr) {
-    if (DebugFlags(CCDebugFlags::Run))
+    if (DebugFlags(CCDebugFlags::Debug))
       std::cerr << "could not run " << (void*)PL_op << ": not generated\n";
     return NORMAL; // use the old
   }
   const UNOP_AUX_item *aux = cUNOP_AUX->op_aux;
   UV index = aux[0].uv;
   if (index >= fragment_count) {
-    if (DebugFlags(CCDebugFlags::Run))
+    if (DebugFlags(CCDebugFlags::Debug))
       std::cerr << "could not run " << (void*)PL_op
                 << ": high index " << index << "\n";
     return NORMAL; // use the old
