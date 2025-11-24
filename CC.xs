@@ -10,6 +10,7 @@
 #include <iostream>
 #include <tuple>
 #include <utility>
+#include <unordered_map>
 
 // lazy for now
 //#define PERL_NO_GET_CONTEXT
@@ -69,20 +70,29 @@ init_debug_flags() {
   }
 }
 
+/* a variable in the PAD, typically a "my" variable, but it can
+   also be a state or our variable.
+*/
 struct PadSv {
   PADOFFSET index = 0;
 };
 
-struct ConstPadSv {
-  PADOFFSET index = 0;
-};
-
+/* these start as OP_CONST, but on threaded builds
+   perl moves them to the pad, and the SV won't be valid
+   in a new thread, so we remember the OP (saved in aux)
+   and fetch the correct SV via the OP, whether it's still an
+   OP_CONST or converted to OP_PADSV
+*/
 struct OpConst {
   size_t op_index = ~0z;
-  OP *op;
+  OP *op; // used only during C code generation
 };
 
-using ArgType = std::variant<PadSv, ConstPadSv, OpConst>;
+struct LocalSv {
+  int local_index;
+};
+
+using ArgType = std::variant<PadSv, OpConst, LocalSv>;
 
 struct RawNumber {
   NV num = 0.0;
@@ -103,9 +113,8 @@ as_number(const PadSv &psv) {
 }
 
 NumArg
-as_number(const ConstPadSv &psv) {
-  SV *sv = PAD_SV(psv.index);
-  return NumArg{RawNumber{SvNV(sv)}};
+as_number(const LocalSv &lsv) {
+  return NumArg{lsv};
 }
 
 // a result returned from a code fragment
@@ -142,6 +151,12 @@ operator <<(std::ostream &out, const PadSv &psv) {
   return out;
 }
 
+std::ostream &
+operator <<(std::ostream &out, const LocalSv &lsv) {
+  out << "loc" << lsv.local_index;
+  return out;
+}
+
 #if 0
 std::ostream &
 operator <<(std::ostream &out, const ConstSv &psv) {
@@ -150,49 +165,49 @@ operator <<(std::ostream &out, const ConstSv &psv) {
 }
 #endif
 
-  void
-  sv_summary(std::ostream &out, SV *sv) {
-    if (SvGMAGICAL(sv)) {
-      out << "GMAGICAL";
-    }
-    else if (!SvOK(sv)) {
-      out << "undef";
-    }
-    else if (SvIOK(sv)) {
-      out << SvIVX(sv);
-    }
-    else if (SvNOK(sv)) {
-      out << SvNVX(sv);
-    }
-    else if (SvPOK(sv)) {
-      out << '"';
-      STRLEN len;
-      const char *pv = SvPV(sv, len);
-      bool dots = false;
-      if (len > 13) {
-        len = 10;
-        dots = true;
-      }
-      const char *end = pv+len;
-      for (; pv < end; ++pv) {
-        if (*pv >= ' ' && *pv <= '~' && *pv != '/') {
-          out << *pv;
-        }
-        else {
-          dots = true;
-          break;
-        }
-      }
-      if (dots) out << "...";
-      out << '"';
-    }
-    else if (SvROK(sv)) {
-      out << "REF";
-    }
-    else {
-      out << "something...";
-    }
+void
+sv_summary(std::ostream &out, SV *sv) {
+  if (SvGMAGICAL(sv)) {
+    out << "GMAGICAL";
   }
+  else if (!SvOK(sv)) {
+    out << "undef";
+  }
+  else if (SvIOK(sv)) {
+    out << SvIVX(sv);
+  }
+  else if (SvNOK(sv)) {
+    out << SvNVX(sv);
+  }
+  else if (SvPOK(sv)) {
+    out << '"';
+    STRLEN len;
+    const char *pv = SvPV(sv, len);
+    bool dots = false;
+    if (len > 13) {
+      len = 10;
+      dots = true;
+    }
+    const char *end = pv+len;
+    for (; pv < end; ++pv) {
+      if (*pv >= ' ' && *pv <= '~' && *pv != '/') {
+        out << *pv;
+      }
+      else {
+        dots = true;
+        break;
+      }
+    }
+    if (dots) out << "...";
+    out << '"';
+  }
+  else if (SvROK(sv)) {
+    out << "REF";
+  }
+  else {
+    out << "something...";
+  }
+}
 
 std::ostream &
 operator <<(std::ostream &out, const OpConst &psv) {
@@ -246,6 +261,11 @@ operator <<(std::ostream &out, const Stack &s) {
   return out;
 }
 
+struct CodeFragment;
+
+CodeFragment &
+operator <<(CodeFragment &os, auto const &v);
+
 /* Used to generate code for an op tree fragment */
 struct CodeFragment {
   CodeFragment(const COP *cop, OP *next_op):
@@ -259,12 +279,32 @@ struct CodeFragment {
     ops.push_back(op);
     return OpConst{index, op};
   }
+  ArgType
+  simplify_val(const ArgType &arg) {
+    if (std::holds_alternative<PadSv>(arg)) {
+      PADOFFSET pad_index = std::get<PadSv>(arg).index;
+      auto search = pad_locals.find(pad_index);
+      if (search == pad_locals.end()) {
+        pad_locals[pad_index] = local_count;
+        ArgType result{LocalSv{local_count++}};
+        *this << "SV *" << result << " = " << arg << ";\n";
+        return result;
+      }
+      else {
+        return ArgType{LocalSv{search->second}};
+      }
+    }
+    else
+      return arg;
+  }
 
   std::ostringstream code;
   std::vector<OP*> ops;
+  std::unordered_map<PADOFFSET, int> pad_locals;
   //CodeResult result;
   line_t line = 0;
   const char *file = 0;
+  int local_count = 0;
 
   // don't allow copying or moving, though this may change
   CodeFragment(CodeFragment const &) = delete;
@@ -398,12 +438,12 @@ code_finalize(pTHX_ CodeFragment &code, Stack &stack, OP *start,
 
 void
 add_binop(OP *o, CodeFragment &code, Stack &stack, std::string_view opname) {
-  auto right = as_number(stack.back());
+  auto right = as_number(code.simplify_val(stack.back()));
   stack.pop_back();
-  auto raw_left = stack.back();
+  auto raw_left = code.simplify_val(stack.back());
   auto left = as_number(raw_left);
   stack.pop_back();
-  auto out = o->op_flags & OPf_STACKED ? raw_left : PadSv{o->op_targ};
+  auto out = o->op_flags & OPf_STACKED ? raw_left : code.simplify_val(PadSv{o->op_targ});
 
   code << "sv_setnv(" << out << ", "
        << left << ' ' << opname << " " << right << ");\n";
