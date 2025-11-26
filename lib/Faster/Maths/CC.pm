@@ -13,10 +13,8 @@ use blib ();
 use Devel::PPPort ();
 use File::Spec ();
 
-our $VERSION = "0.001";
-
 require XSLoader;
-XSLoader::load( __PACKAGE__);
+XSLoader::load();
 
 sub import
 {
@@ -233,6 +231,8 @@ __DATA__
 
 typedef void (*fragment_handler)(pTHX_ const UNOP_AUX_item *aux);
 
+/* API START */
+
 static void
 do_add(pTHX_ SV *out, SV *left, SV *right) {
     sv_setnv(out, SvNV(left) + SvNV(right));
@@ -253,3 +253,4 @@ do_divide(pTHX_ SV *out, SV *left, SV *right) {
     sv_setnv(out, SvNV(left) * SvNV(right));
 }
 
+/* API END */

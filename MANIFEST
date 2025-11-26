@@ -1,12 +1,18 @@
-Build.PL
+CC.xs
 Changes
+cpputil.h
+extport.h
 lib/Faster/Maths/CC.pm
 lib/Faster/Maths/CC.xs
 LICENSE
+Makefile.PL
 MANIFEST			This list of files
 MANIFEST.SKIP
+ppport.h
 README
+README.md
 t/00use.t
-t/01maths.t
+t/01apis.t
+t/20maths.t
 t/95benchmark.t
 t/99pod.t
