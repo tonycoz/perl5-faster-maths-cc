@@ -122,13 +122,6 @@ struct CodeResult {
   std::variant<PadSv, RawNumber> result;
 };
 
-// helper for visiting
-template<class... Ts>
-struct overloaded : Ts... { using Ts::operator()...; };
-// explicit deduction guide (not needed as of C++20)
-template<class... Ts>
-overloaded(Ts...) -> overloaded<Ts...>;
-
 NumArg
 as_number(const ArgType &arg) {
   //NumArg result;
