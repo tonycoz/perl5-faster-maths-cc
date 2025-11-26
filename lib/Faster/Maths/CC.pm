@@ -84,6 +84,9 @@ typedef void
 
 MODULE = $module
 
+# for all our XSUBs
+PROTOTYPES: DISABLE
+
 BOOT:
   SV **svp = hv_fetchs(PL_modglobal, "Faster::Maths::CC::register", 0);
   if (!svp)
@@ -229,4 +232,24 @@ __DATA__
 #include "ppport.h"
 
 typedef void (*fragment_handler)(pTHX_ const UNOP_AUX_item *aux);
+
+static void
+do_add(pTHX_ SV *out, SV *left, SV *right) {
+    sv_setnv(out, SvNV(left) + SvNV(right));
+}
+
+static void
+do_subtract(pTHX_ SV *out, SV *left, SV *right) {
+    sv_setnv(out, SvNV(left) - SvNV(right));
+}
+
+static void
+do_multiply(pTHX_ SV *out, SV *left, SV *right) {
+    sv_setnv(out, SvNV(left) * SvNV(right));
+}
+
+static void
+do_divide(pTHX_ SV *out, SV *left, SV *right) {
+    sv_setnv(out, SvNV(left) * SvNV(right));
+}
 

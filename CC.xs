@@ -98,6 +98,8 @@ struct RawNumber {
   NV num = 0.0;
 };
 
+#if 0 // we may want this again later
+
 using NumArg = std::variant<ArgType, RawNumber>;
 
 NumArg
@@ -117,17 +119,33 @@ as_number(const LocalSv &lsv) {
   return NumArg{lsv};
 }
 
+NumArg
+as_number(const ArgType &arg) {
+  return
+    std::visit([](const auto &val){ return as_number(val); }, arg);
+}
+
+std::ostream &
+operator <<(std::ostream &out, const RawNumber &num) {
+  out << num.num;
+  return out;
+}
+
+std::ostream &
+operator <<(std::ostream &out, const NumArg &arg) {
+  std::visit( overloaded {
+      [&]( const ArgType &a) { out << "SvNV(" << a << ")"; },
+        [&]( const auto &a) { out << a; },
+        }, arg);
+  return out;
+}
+
+#endif
+
 // a result returned from a code fragment
 struct CodeResult {
   std::variant<PadSv, RawNumber> result;
 };
-
-NumArg
-as_number(const ArgType &arg) {
-  //NumArg result;
-  return
-    std::visit([](const auto &val){ return as_number(val); }, arg);
-}
 
 using Stack = std::vector<ArgType>;
 
@@ -220,21 +238,6 @@ operator <<(std::ostream &out, const OpConst &psv) {
 std::ostream &
 operator <<(std::ostream &out, const ArgType &arg) {
   std::visit( [&]( const auto &a) { out << a; }, arg);
-  return out;
-}
-
-std::ostream &
-operator <<(std::ostream &out, const RawNumber &num) {
-  out << num.num;
-  return out;
-}
-
-std::ostream &
-operator <<(std::ostream &out, const NumArg &arg) {
-  std::visit( overloaded {
-      [&]( const ArgType &a) { out << "SvNV(" << a << ")"; },
-        [&]( const auto &a) { out << a; },
-        }, arg);
   return out;
 }
 
@@ -431,15 +434,17 @@ code_finalize(pTHX_ CodeFragment &code, Stack &stack, OP *start,
 
 void
 add_binop(OP *o, CodeFragment &code, Stack &stack, std::string_view opname) {
-  auto right = as_number(code.simplify_val(stack.back()));
+  auto right = code.simplify_val(stack.back());
   stack.pop_back();
-  auto raw_left = code.simplify_val(stack.back());
-  auto left = as_number(raw_left);
+  auto left = code.simplify_val(stack.back());
   stack.pop_back();
-  auto out = o->op_flags & OPf_STACKED ? raw_left : code.simplify_val(PadSv{o->op_targ});
+  auto out = o->op_flags & OPf_STACKED ? left : code.simplify_val(PadSv{o->op_targ});
 
-  code << "sv_setnv(" << out << ", "
-       << left << ' ' << opname << " " << right << ");\n";
+  //code << "sv_setnv(" << out << ", "
+  //     << left << ' ' << opname << " " << right << ");\n";
+  code << opname << "(aTHX_ " << out << ", "
+       << left << ", " << right << ");\n";
+
   // only push a result if non-void
   if (OP_GIMME(o, OPf_WANT_SCALAR) != OPf_WANT_VOID)
     stack.emplace_back(out);
@@ -477,19 +482,19 @@ MY_compile_code(pTHX_ CodeFragment &code, OP *start, OP *final, OP *prev)
         break;
 
       case OP_ADD:
-        add_binop(o, code, stack, "+");
+        add_binop(o, code, stack, "do_add");
         break;
 
       case OP_SUBTRACT:
-        add_binop(o, code, stack, "-");
+        add_binop(o, code, stack, "do_subtract");
         break;
 
       case OP_MULTIPLY:
-        add_binop(o, code, stack, "*");
+        add_binop(o, code, stack, "do_multiply");
         break;
 
       case OP_DIVIDE:
-        add_binop(o, code, stack, "/");
+        add_binop(o, code, stack, "do_divide");
         break;
 
       default:
