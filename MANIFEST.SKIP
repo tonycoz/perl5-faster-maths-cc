@@ -24,3 +24,6 @@
 
 # perf record
 ^perf\.data
+
+# not part of the module
+^cpptry/
