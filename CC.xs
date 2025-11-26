@@ -467,6 +467,8 @@ MY_compile_code(pTHX_ CodeFragment &code, OP *start, OP *final, OP *prev)
   OP *oprev = NULL;
   for(o = start; o; o = o->op_next) {
     if (DebugFlags(CCDebugFlags::TraceOps)) {
+      std::cerr << "Compile op: " << o->op_type << " "
+                << OP_NAME(o) << "\n";
     }
     if (DebugFlags(CCDebugFlags::DumpStack))
       std::cerr << "Stack: " << stack << "\n";
