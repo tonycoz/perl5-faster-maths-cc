@@ -74,6 +74,8 @@ init_debug_flags() {
    also be a state or our variable.
 */
 struct PadSv {
+  PadSv(PADOFFSET index_):index(index_) {}
+  PadSv() = delete;
   PADOFFSET index = 0;
 };
 
@@ -84,15 +86,31 @@ struct PadSv {
    OP_CONST or converted to OP_PADSV
 */
 struct OpConst {
+  OpConst(size_t op_index_, OP *op_): op_index(op_index_), op(op_) {}
+  OpConst() = delete;
   size_t op_index = ~0z;
   OP *op; // used only during C code generation
 };
 
+/* an SV stored in a C local variable.
+   PadSvs are converted into these to save pad lookups.
+   Operator results can be these if the result isn't always in a
+   PADTMP (as with overloading).
+*/
 struct LocalSv {
+  LocalSv(int local_index_): local_index(local_index_){}
+  LocalSv() = delete;
   int local_index;
 };
 
-using ArgType = std::variant<PadSv, OpConst, LocalSv>;
+struct StackSv {
+  StackSv(ssize_t offset_):offset(offset_) {}
+  StackSv() = delete;
+  ssize_t offset;
+};
+
+/* Represents an argument on the stack */
+  using ArgType = std::variant<PadSv, OpConst, LocalSv, StackSv>;
 
 struct RawNumber {
   NV num = 0.0;
@@ -100,6 +118,13 @@ struct RawNumber {
 
 #if 0 // we may want this again later
 
+/* An argument in NV form.
+   For constants this is ideally the number itself, otherwise it's
+   typically SvNV(sv of arg)
+
+   Currently unused but it may change if we can optimize some more
+   down the track.
+*/
 using NumArg = std::variant<ArgType, RawNumber>;
 
 NumArg
@@ -111,6 +136,7 @@ as_number(const OpConst &csv) {
 NumArg
 as_number(const PadSv &psv) {
   SV *sv = PAD_SV(psv.index);
+  // FIXME: what happens if the SV is AMAGICal? (can it happen?)
   return SvREADONLY(sv) ? NumArg{RawNumber{SvNV(sv)}} : NumArg(psv);
 }
 
@@ -147,7 +173,40 @@ struct CodeResult {
   std::variant<PadSv, RawNumber> result;
 };
 
-using Stack = std::vector<ArgType>;
+// abstraction of the perl value stack
+struct Stack {
+  ArgType
+  pop() {
+    if (stack.size()) {
+      auto result = stack.back();
+      stack.pop_back();
+      return result;
+    }
+    else {
+      return ArgType{StackSv{over_popped++}};
+    }
+  }
+  void
+  push(const ArgType &&arg) {
+    stack.emplace_back(arg);
+  }
+  size_t
+  size() {
+    return stack.size();
+  }
+  auto
+  begin() {
+    return stack.begin();
+  }
+  auto
+  end() {
+    return stack.end();
+  }
+  // values we've pushed
+  std::vector<ArgType> stack;
+  // number of values from the real perl stack
+  ssize_t over_popped = 0;
+};
 
 std::ostream &
 operator <<(std::ostream &out, const PadSv &psv) {
@@ -236,6 +295,12 @@ operator <<(std::ostream &out, const OpConst &psv) {
 }
 
 std::ostream &
+operator <<(std::ostream &out, const StackSv &ssv) {
+  out << "PL_stack_sp[" << ssv.offset << "]";
+  return out;
+}
+
+std::ostream &
 operator <<(std::ostream &out, const ArgType &arg) {
   std::visit( [&]( const auto &a) { out << a; }, arg);
   return out;
@@ -251,7 +316,7 @@ operator <<(std::ostream &out, SV *sv) {
 
 std::ostream &
 operator <<(std::ostream &out, const Stack &s) {
-  for (auto i : s) {
+  for (auto i : s.stack) {
       out << i << ' ';
   }
   return out;
@@ -275,14 +340,17 @@ struct CodeFragment {
     ops.push_back(op);
     return OpConst{index, op};
   }
+  LocalSv
+  make_local() {
+    return LocalSv{local_count++};
+  }
   ArgType
   simplify_val(const ArgType &arg) {
     if (std::holds_alternative<PadSv>(arg)) {
       PADOFFSET pad_index = std::get<PadSv>(arg).index;
       auto search = pad_locals.find(pad_index);
       if (search == pad_locals.end()) {
-        pad_locals[pad_index] = local_count;
-        ArgType result{LocalSv{local_count++}};
+        ArgType result{make_local()};
         *this << "SV *" << result << " = " << arg << ";\n";
         return result;
       }
@@ -327,6 +395,13 @@ operator <<(CodeFragment &os, auto const &v) {
 
 XOP xop_callcompiled;
 
+inline OP *
+oCCOP_SKIP(OP *o) {
+  const UNOP_AUX_item *aux = cUNOP_AUXo->op_aux;
+
+  return (OP*)aux[1].pv; // umm
+}
+
 OP *
 pp_callcompiled(pTHX)
 {
@@ -356,21 +431,22 @@ pp_callcompiled(pTHX)
 void
 code_finalize(pTHX_ CodeFragment &code, Stack &stack, OP *start,
               OP *final, OP *prev) {
-  // no result?
-  if (stack.size() == 0) {
-    if (DebugFlags(CCDebugFlags::Failures)) {
-      std::cerr << "Failed to finalize: stack empty\n";
-    }
-    return;
+  // FIXME: if we're pushing something we popped this will free it
+  // and then try to use it for reference counted stack builds
+  // which would be bad
+  if (stack.over_popped) {
+    code << "rpp_popfree_to(PL_stack_sp-"
+         << stack.over_popped << ");\n";
   }
-  code << "rpp_extend(" << stack.size() << ");\n";
+  if (stack.size() != 0)
+    code << "rpp_extend(" << stack.size() << ");\n";
   for (auto item : stack) {
     // this may need to change
     code << "rpp_push_1(" << item << ");\n";
   }
 
   IV index = CodeIndex++;
-  SV *out = Perl_newSVpvf(aTHX_ "static void\nf%" UVf "(pTHX, "
+  SV *out = Perl_newSVpvf(aTHX_ "static void\nf%" UVf "(pTHX_ "
                           "const UNOP_AUX_item *aux) {\n", index);
   std::string codestring = code.code.str();
   sv_catpvn(out, codestring.c_str(), codestring.size());
@@ -433,21 +509,30 @@ code_finalize(pTHX_ CodeFragment &code, Stack &stack, OP *start,
 }
 
 void
-add_binop(OP *o, CodeFragment &code, Stack &stack, std::string_view opname) {
-  auto right = code.simplify_val(stack.back());
-  stack.pop_back();
-  auto left = code.simplify_val(stack.back());
-  stack.pop_back();
+add_binop(pTHX_ OP *o, CodeFragment &code, Stack &stack, std::string_view opname) {
+  auto right = code.simplify_val(stack.pop());
+  auto left = code.simplify_val(stack.pop());
   auto out = o->op_flags & OPf_STACKED ? left : code.simplify_val(PadSv{o->op_targ});
 
-  //code << "sv_setnv(" << out << ", "
-  //     << left << ' ' << opname << " " << right << ");\n";
-  code << opname << "(aTHX_ " << out << ", "
-       << left << ", " << right << ");\n";
+  bool mutator =
+    (PL_opargs[o->op_type] & OA_TARGLEX)
+    && (o->op_private & OPpTARGET_MY);
+
+  // the result might be in out, or it might be in a mortal
+  // so just some SV
+  auto result = code.make_local();
+  code << "SV *" << result << " = "
+       << opname << "(aTHX_ " << out << ", "
+       << left << ", "
+       << right << ",\n    0";
+  if (o->op_flags & OPf_STACKED) {
+    code << " | AMGf_assign";
+  }
+  code << ", " << mutator << ");\n";
 
   // only push a result if non-void
   if (OP_GIMME(o, OPf_WANT_SCALAR) != OPf_WANT_VOID)
-    stack.emplace_back(out);
+    stack.push(result);
 }
 
 #define compile_code(code, start, final, prev)               \
@@ -474,27 +559,28 @@ MY_compile_code(pTHX_ CodeFragment &code, OP *start, OP *final, OP *prev)
       std::cerr << "Op: " << OP_NAME(o) << "\n";
     switch(o->op_type) {
       case OP_CONST:
-        stack.emplace_back(code.save_op(o));
+        stack.push(code.save_op(o));
         break;
 
       case OP_PADSV:
-        stack.emplace_back(PadSv{o->op_targ});
+        stack.push(PadSv{o->op_targ});
         break;
 
       case OP_ADD:
-        add_binop(o, code, stack, "do_add");
+        // FIXME: SvSETMAGIC() as needed
+        add_binop(aTHX_ o, code, stack, "do_add");
         break;
 
       case OP_SUBTRACT:
-        add_binop(o, code, stack, "do_subtract");
+        add_binop(aTHX_ o, code, stack, "do_subtract");
         break;
 
       case OP_MULTIPLY:
-        add_binop(o, code, stack, "do_multiply");
+        add_binop(aTHX_ o, code, stack, "do_multiply");
         break;
 
       case OP_DIVIDE:
-        add_binop(o, code, stack, "do_divide");
+        add_binop(aTHX_ o, code, stack, "do_divide");
         break;
 
       default:
@@ -540,7 +626,7 @@ rpeep_for_callcompiled(pTHX_ OP *o, bool init_enabled)
    * slowo then we have reached a cycle and should stop
    */
   OP *slowo = NULL;
-  //int slowotick = 0;
+  int slowotick = 0;
 
   size_t depth = 0;
   int count = 0;
@@ -579,6 +665,20 @@ rpeep_for_callcompiled(pTHX_ OP *o, bool init_enabled)
       DEBUG_u( PerlIO_printf(PerlIO_stderr(), "scan op %d (%s %p) depth %zu count %d prev %p\n",
                              o->op_type, OP_NAME(o), (void *)o, depth, count, (void *)oprev) );
       switch(o->op_type) {
+      case OP_CUSTOM:
+        if (o->op_ppaddr == pp_callcompiled) {
+          if (DebugFlags(CCDebugFlags::Debug))
+            std::cerr << "Trace: saw our custom op... skipping\n";
+          // we've processed this block
+          // make sure we don't do it again
+          firstprev = oprev = o;
+          o = oCCOP_SKIP(o);
+          first = o;
+          depth = 0;
+          count = 0;
+        }
+        break;
+
       case OP_CONST:
       case OP_PADSV:
         ++depth;
@@ -639,6 +739,10 @@ rpeep_for_callcompiled(pTHX_ OP *o, bool init_enabled)
         break;
       }
     }
+    if (!slowo)
+      slowo = o;
+    else if ((slowotick++) % 2)
+      slowo = slowo->op_next;
     oprev = o;
     o = o->op_next;
   }
@@ -681,6 +785,8 @@ register_fragments(pTHX_ const fragment_handler *frags,
 }
 
 MODULE = Faster::Maths::CC    PACKAGE = Faster::Maths::CC
+
+PROTOTYPES: DISABLE
 
 BOOT:
   init_debug_flags();
