@@ -40,39 +40,42 @@ my $api_name;
 while (<$fh>) {
   last if /API END/;
   $api_lines .=  $_;
-  if (/^(?:static|PERL_STATIC_INLINE)\s+(.*)$/) {
-    die "Unexpected ^static in API definition" if $in_api;
-    push @apis, "$1\n";
-    note $1;
-    @api_args = ();
-    undef $api_name;
-    ++$in_api;
-  }
-  elsif ($in_api) {
-    if (/^(\w+)\(/) {
-      $api_name and die "Extra API name $1 found (already saw $api_name)";
-      $api_name = $1;
-    }
-    s/pTHX_ //;
-    my $at_end = s/\{//;
-    my $args_only = $_ =~ s/\)\s*$//r;
-    for my $arg (split /,/, $args_only) {
-      $arg =~ /(\w+)$/
-        or die "Failed to parse argument name from $arg";
-      push @api_args, $1;
-    }
-    $apis[-1] .= $_;
-    if ($at_end) {
-      my $args = join ", ", @api_args;
-      $in_api = 0;
-      $apis[-1] .= <<"EOS";
-CODE:
-    $api_name(aTHX_ $args);
-EOS
-    }
-
-    note $_;
-  }
+  # I originally tried to define XSUBs for each API, but
+  # some parameter types don't work well for that
+#   if (/^(?:static|PERL_STATIC_INLINE)\s+(.*)$/) {
+#     die "Unexpected ^static in API definition" if $in_api;
+#     push @apis, "$1\n";
+#     note $1;
+#     @api_args = ();
+#     undef $api_name;
+#     ++$in_api;
+#   }
+#   elsif ($in_api) {
+#     my $orig = $_;
+#     if (/^(\w+)\(/) {
+#       $api_name and die "Extra API name $1 found (already saw $api_name)";
+#       $api_name = $1;
+#     }
+#     s/pTHX_\s+//;
+#     my $at_end = s/\{//;
+#     my $args_only = $_ =~ s/\)\s*$//r;
+#     for my $arg (split /,/, $args_only) {
+#       $arg =~ /(\w+)$/
+#         or die "Failed to parse argument name from $arg ($orig)";
+#       push @api_args, $1;
+#     }
+#     $apis[-1] .= $_;
+#     if ($at_end) {
+#       my $args = join ", ", @api_args;
+#       $in_api = 0;
+#       $apis[-1] .= <<"EOS";
+# CODE:
+#     $api_name(aTHX_ $args);
+# EOS
+#     }
+#
+#    note $_;
+#  }
 }
 
 my $cleanup = !$ENV{PERL_FMC_KEEP};
@@ -96,11 +99,14 @@ MODULE = TestCCAPI
 
 PROTOTYPES: DISABLE
 
+BOOT:
+    1;
+
 EOS
 
-for my $api (@apis) {
-  $xs .= "$api\n\n";
-}
+# for my $api (@apis) {
+#   $xs .= "$api\n\n";
+# }
 
 save_file("$build_dir/TestCCAPI.xs", $xs);
 
