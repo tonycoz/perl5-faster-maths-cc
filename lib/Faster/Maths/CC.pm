@@ -213,6 +213,50 @@ Implementation
 
 =cut
 
+=head1 ENVIRONMENT VARIABLES
+
+=over
+
+=item C<PERL_FMC_DEBUG>
+
+Contains a number of flags controlling debug output from the code
+generation and build process:
+
+=over
+
+=item C<s> - dump the emulated stack as OPs are processed.
+
+=item C<c> - write generated code to STDERR.  This does not include
+the file preamble (from C<share/header.c>) nor the function headers.
+
+=item C<o> - display each op while processing ops.
+
+=item C<f> - report any failures in processing (currently unused).
+
+=item C<r> - report when the generated code registers itself with
+Faster::Maths::CC.
+
+=item C<b> - print a line for each step of the build process.
+
+=item C<x> - prevents build output being redirected to F</dev/null>.
+
+=item C<d> - miscellaneous debug output.
+
+=item C<F> - report calls to the generated code fragments.
+
+=item C<n> - generate the C code and build it, but don't insert the
+OPs.
+
+=back
+
+=item C<PERL_FMC_KEEP>
+
+If set to non-zero the build directory for the generated XS module
+isn't cleaned up on exit and the path to the build directory will be
+written to STDERR.
+
+=back
+
 =head1 AUTHOR
 
 Tony Cook <tony@develop-help.com>
