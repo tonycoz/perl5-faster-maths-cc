@@ -1,9 +1,11 @@
 #!perl -w
 use strict;
 use ExtUtils::MakeMaker 6.46;
-use Config;
 use ExtUtils::CppGuess;
+use File::ShareDir::Install;
 use 5.022;
+
+install_share "share";
 
 my %opts = 
   (
@@ -46,6 +48,7 @@ $opts{META_MERGE}{prereqs} =
       {
         "ExtUtils::MakeMaker" => "6.46",
         "ExtUtils::CppGuess" => 0,
+        "File::ShareDir::Install" => 0,
       },
     },
     build =>
@@ -60,6 +63,7 @@ $opts{META_MERGE}{prereqs} =
     {
       requires =>
       {
+        "File::ShareDir" => 0,
       }
     },
     test =>
@@ -85,3 +89,6 @@ WriteMakefile
     %opts,
     $guess->makemaker_options,
    );
+
+package MY;
+use File::ShareDir::Install qw(postamble);

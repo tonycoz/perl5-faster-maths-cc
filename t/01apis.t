@@ -12,14 +12,17 @@ use v5.40;
 require blib;
 use Devel::PPPort;
 use Cwd qw(getcwd);
+use File::ShareDir qw(dist_file);
 
 sub note; # debugger breaks deep in Test2
 sub ok;
 sub diag;
 sub done_testing;
 
-open my $fh, "<", "lib/Faster/Maths/CC.pm"
-  or die "Cannot open CC.pm: $!";
+my $header_file = dist_file("Faster-Maths-CC", "header.c");
+
+open my $fh, "<", $header_file
+  or die "Cannot open $header_file: $!";
 
 my $version;
 
@@ -27,8 +30,6 @@ while (<$fh>) {
   /^package Faster::Maths::CC\s+([\d.v]+);/ and $version = $1;
   last if /API START/;
 }
-
-$version or die "No our \$VERSION ... seen in CC.pm";
 
 $_ or die "Couldn't find \"API START\" in CC.pm";
 

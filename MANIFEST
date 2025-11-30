@@ -3,14 +3,13 @@ Changes
 cpputil.h
 extport.h
 lib/Faster/Maths/CC.pm
-lib/Faster/Maths/CC.xs
 LICENSE
 Makefile.PL
 MANIFEST			This list of files
 MANIFEST.SKIP
 ppport.h
-README
 README.md
+share/header.c
 t/00use.t
 t/01apis.t
 t/20maths.t
