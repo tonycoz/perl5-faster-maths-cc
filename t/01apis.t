@@ -26,20 +26,12 @@ open my $fh, "<", $header_file
 
 my $version;
 
-while (<$fh>) {
-  /^package Faster::Maths::CC\s+([\d.v]+);/ and $version = $1;
-  last if /API START/;
-}
-
-$_ or die "Couldn't find \"API START\" in CC.pm";
-
 my $api_lines;
 my @apis;
 my $in_api;
 my @api_args;
 my $api_name;
 while (<$fh>) {
-  last if /API END/;
   $api_lines .=  $_;
   # I originally tried to define XSUBs for each API, but
   # some parameter types don't work well for that
@@ -83,16 +75,7 @@ my $cleanup = !$ENV{PERL_FMC_KEEP};
 my $build_dir = File::Temp->newdir(CLEANUP => $cleanup);
 diag "build directory $build_dir" unless $cleanup;
 
-my $xs = <<'EOS';
-#define PERL_NO_GET_CONTEXT
-#include "EXTERN.h"
-#include "perl.h"
-#include "XSUB.h"
-#include "ppport.h"
-
-EOS
-
-$xs .= $api_lines;
+my $xs = $api_lines;
 
 $xs .= <<'EOS';
 
