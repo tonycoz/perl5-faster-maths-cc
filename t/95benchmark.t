@@ -70,7 +70,7 @@ foreach ( 1 .. 20 ) {
    $faster_elapsed += measure {
       my $ret;
       $ret = julia_faster( @$Z0 ) for 1 .. $COUNT;
-      $ret == $ESCAPE_VAL or die "Expected $ESCAPE_VAL from faster\n";
+      $ret == $ESCAPE_VAL or die "Expected $ESCAPE_VAL from faster got $ret\n";
    };
 }
 
