@@ -119,6 +119,26 @@ my_iv_add_may_overflow(IV il, IV ir, IV *result) {
 }
 
 static inline bool
+my_iv_sub_may_overflow(IV il, IV ir, IV *result) {
+#  if defined(I_STDCKDINT) && !IV_ADD_SUB_OVERFLOW_IS_EXPENSIVE
+#    return ckd_sub(result, il, ir)
+#  elif defined(HAS_BUILTIN_SUB_OVERFLOW) && !IV_ADD_SUB_OVERFLOW_IS_EXPENSIVE
+     return __builtin_sub_overflow(il, ir, result);
+#  else
+    PERL_UINT_FAST8_T const topl = ((UV)il) >> (UVSIZE * 8 - 2);
+    PERL_UINT_FAST8_T const topr = ((UV)ir) >> (UVSIZE * 8 - 2);
+
+    /* if both are in a range that can't under/overflow, do a simple integer
+     * subtract: if the top of both numbers are 00  or 11, then it's safe */
+    if (!( ((topl+1) | (topr+1)) & 2)) {
+        *result = il - ir;
+        return false;
+    }
+    return true;                   /* subtraction may overflow */
+#endif
+}
+
+static inline bool
 my_lossless_NV_to_IV(NV nv, IV *ivp)
 {
     /* This function determines if the input NV 'nv' may be converted without
@@ -321,10 +341,151 @@ do_add(pTHX_ SV *out, SV *left, SV *right, int amagic_flags, bool mutator) {
 }
 
 static void
-do_subtract_raw(pTHX_ SV *out, SV *left, SV *right) {
-    /* subtraction without get magic, without overloads */
-    /* will do IV preservation eventually */
-    sv_setnv(out, SvNV_nomg(left) - SvNV_nomg(right));
+do_subtract_raw(pTHX_ SV *out, SV *svl, SV *svr) {
+    NV nv;
+
+#ifdef PERL_PRESERVE_IVUV
+
+    /* special-case some simple common cases */
+    if (!((svl->sv_flags|svr->sv_flags) & (SVf_IVisUV|SVs_GMG))) {
+        IV il, ir;
+        U32 flags = (svl->sv_flags & svr->sv_flags);
+        if (flags & SVf_IOK) {
+            /* both args are simple IVs */
+            IV result;
+            il = SvIVX(svl);
+            ir = SvIVX(svr);
+          do_iv:
+            if (!my_iv_sub_may_overflow(il, ir, &result)) {
+                fast_sv_setiv(aTHX_ out, result); /* args not GMG, so can't be tainted */
+                return;
+            }
+            goto generic;
+        }
+        else if (flags & SVf_NOK) {
+            /* both args are NVs */
+            NV nl = SvNVX(svl);
+            NV nr = SvNVX(svr);
+
+            if (my_lossless_NV_to_IV(nl, &il) && my_lossless_NV_to_IV(nr, &ir)) {
+                /* nothing was lost by converting to IVs */
+                goto do_iv;
+            }
+            fast_sv_setnv(aTHX_ out, nl - nr); /* args not GMG, so can't be tainted */
+            return;
+        }
+    }
+
+  generic:
+
+    bool useleft = USE_LEFT(svl);
+    /* See comments in pp_add (in pp_hot.c) about Overflow, and how
+       "bad things" happen if you rely on signed integers wrapping.  */
+    if (SvIV_please_nomg(svr)) {
+        /* Unless the left argument is integer in range we are going to have to
+           use NV maths. Hence only attempt to coerce the right argument if
+           we know the left is integer.  */
+        UV auv = 0;
+        bool auvok = FALSE;
+        bool a_valid = 0;
+
+        if (!useleft) {
+            auv = 0;
+            a_valid = auvok = 1;
+            /* left operand is undef, treat as zero.  */
+        } else {
+            /* Left operand is defined, so is it IV? */
+            if (SvIV_please_nomg(svl)) {
+                if ((auvok = SvIsUV(svl)))
+                    auv = SvUVX(svl);
+                else {
+                    const IV aiv = SvIVX(svl);
+                    if (aiv >= 0) {
+                        auv = aiv;
+                        auvok = 1;	/* Now acting as a sign flag.  */
+                    } else {
+                        auv = NEGATE_2UV(aiv);
+                    }
+                }
+                a_valid = 1;
+            }
+        }
+        if (a_valid) {
+            bool result_good = 0;
+            UV result;
+            UV buv;
+            bool buvok = SvIsUV(svr); /* svr is always IOK here */
+
+            if (buvok)
+                buv = SvUVX(svr);
+            else {
+                const IV biv = SvIVX(svr);
+                if (biv >= 0) {
+                    buv = biv;
+                    buvok = 1;
+                } else
+                    buv = NEGATE_2UV(biv);
+            }
+            /* ?uvok if value is >= 0. basically, flagged as UV if it's +ve,
+               else "IV" now, independent of how it came in.
+               if a, b represents positive, A, B negative, a maps to -A etc
+               a - b =>  (a - b)
+               A - b => -(a + b)
+               a - B =>  (a + b)
+               A - B => -(a - b)
+               all UV maths. negate result if A negative.
+               subtract if signs same, add if signs differ. */
+
+            if (auvok ^ buvok) {
+                /* Signs differ.  */
+                result = auv + buv;
+                if (result >= auv)
+                    result_good = 1;
+            } else {
+                /* Signs same */
+                if (auv >= buv) {
+                    result = auv - buv;
+                    /* Must get smaller */
+                    if (result <= auv)
+                        result_good = 1;
+                } else {
+                    result = buv - auv;
+                    if (result <= buv) {
+                        /* result really should be -(auv-buv). as its negation
+                           of true value, need to swap our result flag  */
+                        auvok = !auvok;
+                        result_good = 1;
+                    }
+                }
+            }
+            if (result_good) {
+                if (auvok)
+                    sv_setuv(out, result);
+                else {
+                    /* Negate result */
+                    if (result <= ABS_IV_MIN)
+                        sv_setiv(out, NEGATE_2IV(result));
+                    else {
+                        /* result valid, but out of range for IV.  */
+                        nv = -(NV)result;
+                        goto ret_nv;
+                    }
+                }
+                return;
+            } /* Overflow, drop through to NVs.  */
+        }
+    }
+#else
+    useleft = USE_LEFT(svl);
+#endif
+
+    /* If left operand is undef, treat as zero - value */
+    nv = useleft ? SvNV_nomg(svl) : 0.0;
+    /* Separate statements here to ensure SvNV_nomg(svl) is evaluated
+       before SvNV_nomg(svr) */
+    nv -= SvNV_nomg(svr);
+  ret_nv:
+    sv_setnv(out, nv);
 }
 
 static inline SV *

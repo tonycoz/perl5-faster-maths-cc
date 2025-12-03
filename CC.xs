@@ -74,7 +74,9 @@ init_debug_flags() {
    also be a state or our variable.
 */
 struct PadSv {
-  PadSv(PADOFFSET index_):index(index_) {}
+  PadSv(PADOFFSET index_):index(index_) {
+    assert(index_ != 0);
+  }
   PadSv() = delete;
   PADOFFSET index = 0; // PAD_SV[index]
 };
@@ -591,6 +593,16 @@ compile_code(pTHX_ CodeFragment &code, OP *start, OP *final, OP *prev)
         add_binop(aTHX_ o, code, stack, "do_divide");
         break;
 
+      case OP_NEGATE:
+        {
+          auto arg = code.simplify_val(stack.pop());
+          auto out = code.simplify_val(PadSv{o->op_targ});
+          code << "sv_setnv(" << out << ", -SvNV(" << arg << "));\n";
+          if (OP_GIMME(o, OPf_WANT_SCALAR) != OPf_WANT_VOID)
+            stack.push(ArgType{out});
+        }
+        break;
+
       default:
         croak("ARGH unsure how to optimize this op\n");
     }
@@ -681,6 +693,9 @@ rpeep_for_callcompiled(pTHX_ OP *o, bool init_enabled)
       case OP_DIVIDE:
          --depth;
          ++count;
+        break;
+      case OP_NEGATE:
+        ++count;
         break;
 
       case OP_OR:
