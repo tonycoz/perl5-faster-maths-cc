@@ -24,6 +24,13 @@ my $max_uv = ~0;
 my $max_uvm1 = $max_uv - 1;
 my $min_uvp1 = $min_uv + 1;
 my $max_uvp1 = $max_uv + 1;
+my $min_iv = -$max_iv - 1;
+my $mmax_iv = - $max_iv;
+my $three = 3;
+my $mthree = -3;
+my $five = 5;
+my $mfive = -5;
+my $fifteen = 15;
 {
   use Faster::Maths::CC;
   # FMC requires 3 "math" ops to optimize
@@ -57,6 +64,40 @@ my $max_uvp1 = $max_uv + 1;
   # tryeq $T++, +29 + -29, 0, 'addition which sums to 0';
   # tryeq $T++, -1 + 4, 3, 'addition of signed negative and positive integers';
   # tryeq $T++, +4 + -17, -13, 'addition of signed positive and negative integers';
+
+  # subtraction
+  tryeq $T++, $three - 1 + 0, 2, 'subtraction of two positive integers';
+  tryeq $T++, $three - 15, -12,
+    'subtraction of two positive integers: minuend smaller';
+  tryeq $T++, $three - -7 + 0, 10, 'subtraction of positive and negative integer';
+  tryeq $T++, -156 - $five + 0, -161, 'subtraction of negative and positive integer';
+  tryeq $T++, -156 - $mfive + 0, -151, 'subtraction of two negative integers';
+  tryeq $T++, -156 - -$five + 0, -151, 'subtraction of two negative integers';
+#  tryeq $T++, $mfive - -12 + 0, 7,
+#    'subtraction of two negative integers: minuend smaller';
+#  tryeq $T++, $mthree - -$three + 0, 0, 'subtraction of two negative integers with result of 0';
+#tryeq $T++, $fifteen - 15 + 0, 0, 'subtraction of two positive integers with result of 0';
+#tryeq $T++, $max_iv - 0 + 0, $max_iv, 'subtraction from large integer';
+#tryeq $T++, $min_uv - 0 + 0, $min_uv, 'subtraction from large integer';
+#tryeq $T++, $min_iv - 0 + 0, $min_iv,
+#    'subtraction from large negative integer';
+#tryeq $T++, 0 - $mmax_iv + 0, $max_iv,
+#    'subtraction of large negative integer from 0';
+# tryeq $T++, -1 - -2147483648, 2147483647,
+#     'subtraction of large negative integer from negative integer';
+# tryeq $T++, 2 - -2147483648, 2147483650,
+#     'subtraction of large negative integer from positive integer';
+# tryeq $T++, 4294967294 - 3, 4294967291, 'subtraction from large integer';
+# tryeq $T++, -2147483648 - -1, -2147483647,
+#     'subtraction from large negative integer';
+# tryeq $T++, 2147483647 - -1, 2147483648, 'IV - IV promote to UV';
+# tryeq $T++, 2147483647 - -2147483648, 4294967295, 'IV - IV promote to UV';
+# tryeq $T++, 4294967294 - -3, 4294967297, 'UV - IV promote to NV';
+# tryeq $T++, -2147483648 - +1, -2147483649, 'IV - IV promote to NV';
+# tryeq $T++, 2147483648 - 2147483650, -2, 'UV - UV promote to IV';
+# tryeq $T++, 2000000000 - 4000000000, -2000000000, 'IV - UV promote to IV';
+
+
 }
 
 print "1..", $T-1, "\n";
