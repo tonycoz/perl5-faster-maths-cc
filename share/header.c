@@ -139,6 +139,83 @@ my_iv_sub_may_overflow(IV il, IV ir, IV *result) {
 }
 
 static inline bool
+my_iv_mul_may_overflow(IV il, IV ir, IV *result) {
+#if defined(I_STDCKDINT) && !IV_MUL_OVERFLOW_IS_EXPENSIVE
+  return ckd_mul(result, il, ir)
+#elif defined(HAS_BUILTIN_MUL_OVERFLOW) && !IV_MUL_OVERFLOW_IS_EXPENSIVE
+    return __builtin_mul_overflow(il, ir, result);
+#  else
+    UV const topl = ((UV)il) >> (UVSIZE * 4 - 1);
+    UV const topr = ((UV)ir) >> (UVSIZE * 4 - 1);
+
+    /* if both are in a range that can't under/overflow, do a simple integer
+     * multiply: if the top halves(*) of both numbers are 00...00  or 11...11,
+     * then it's safe.
+     * (*) for 32-bits, the "top half" is the top 17 bits,
+     *     for 64-bits, its 33 bits */
+    if (!(
+              ((topl+1) | (topr+1))
+            & ( (((UV)1) << (UVSIZE * 4 + 1)) - 2) /* 11..110 */
+    )) {
+        *result = il * ir;
+        return false;
+    }
+    return true;                   /* multiplication may overflow */
+#endif
+}
+
+PERL_STATIC_INLINE bool
+my_uv_mul_overflow (UV auv, UV buv, UV *const result)
+{
+#  if defined(I_STDCKDINT)
+  return ckd_mul(result, auv, buv);
+#  elif defined(HAS_BUILTIN_MUL_OVERFLOW)
+  return __builtin_mul_overflow(auv, buv, result);
+#  else
+    const UV topmask = (~ (UV)0) << (4 * sizeof (UV));
+    const UV botmask = ~topmask;
+
+#    if UVSIZE > LONGSIZE && UVSIZE <= 2 * LONGSIZE
+    /* If UV is double-word integer, declare these variables as single-word
+       integers to help compiler to avoid double-word multiplication.  */
+    unsigned long alow, ahigh, blow, bhigh;
+#    else
+    UV alow, ahigh, blow, bhigh;
+#    endif
+
+    /* If this does sign extension on unsigned it's time for plan B  */
+    ahigh = auv >> (4 * sizeof (UV));
+    alow  = auv & botmask;
+    bhigh = buv >> (4 * sizeof (UV));
+    blow  = buv & botmask;
+
+    if (ahigh && bhigh)
+        /* eg 32 bit is at least 0x10000 * 0x10000 == 0x100000000
+           which is overflow.  */
+        return true;
+
+    UV product_middle = 0;
+    if (ahigh || bhigh) {
+        /* One operand is large, 1 small */
+        /* Either ahigh or bhigh is zero here, so the addition below
+           can't overflow.  */
+        product_middle = (UV)ahigh * blow + (UV)alow * bhigh;
+        if (product_middle & topmask)
+            return true;
+        /* OK, product_middle won't lose bits when we shift it.  */
+        product_middle <<= 4 * sizeof (UV);
+    }
+    /* else: eg 32 bit is at most 0xFFFF * 0xFFFF == 0xFFFE0001
+       so the unsigned multiply cannot overflow.  */
+
+    /* (UV) cast below is necessary to force the multiplication to produce
+       UV result, as alow and blow might be narrower than UV */
+    UV product_low = (UV)alow * blow;
+    return my_uv_add_overflow(product_middle, product_low, result);
+#  endif
+}
+
+static inline bool
 my_lossless_NV_to_IV(NV nv, IV *ivp)
 {
     /* This function determines if the input NV 'nv' may be converted without
@@ -504,8 +581,108 @@ do_subtract(pTHX_ SV *out, SV *left, SV *right, int amagic_flags,
 }
 
 static void
-do_multiply_raw(pTHX_ SV *out, SV *left, SV *right) {
-    sv_setnv(out, SvNV_nomg(left) * SvNV_nomg(right));
+do_multiply_raw(pTHX_ SV *out, SV *svl, SV *svr) {
+#ifdef PERL_PRESERVE_IVUV
+    /* special-case some simple common cases */
+    if (!((svl->sv_flags|svr->sv_flags) & (SVf_IVisUV|SVs_GMG))) {
+        IV il, ir;
+        U32 flags = (svl->sv_flags & svr->sv_flags);
+        if (flags & SVf_IOK) {
+            /* both args are simple IVs */
+            IV result;
+            il = SvIVX(svl);
+            ir = SvIVX(svr);
+          do_iv:
+            if (!my_iv_mul_may_overflow(il, ir, &result)) {
+              fast_sv_setiv(aTHX_ out, result);
+              return;
+            }
+        }
+        else if (flags & SVf_NOK) {
+            /* both args are NVs */
+            NV nl = SvNVX(svl);
+            NV nr = SvNVX(svr);
+            NV result;
+
+            if (my_lossless_NV_to_IV(nl, &il) && my_lossless_NV_to_IV(nr, &ir)) {
+                /* nothing was lost by converting to IVs */
+                goto do_iv;
+            }
+            result = nl * nr;
+#  if defined(__sgi) && defined(USE_LONG_DOUBLE) && LONG_DOUBLEKIND == LONG_DOUBLE_IS_DOUBLEDOUBLE_128_BIT_BE_BE && NVSIZE == 16
+            if (Perl_isinf(result)) {
+                Zero((U8*)&result + 8, 8, U8);
+            }
+#  endif
+            fast_sv_setnv(aTHX_ out, result);
+            return;
+        }
+    }
+
+    if (SvIV_please_nomg(svr)) {
+        /* Unless the left argument is integer in range we are going to have to
+           use NV maths. Hence only attempt to coerce the right argument if
+           we know the left is integer.  */
+        /* Left operand is defined, so is it IV? */
+        if (SvIV_please_nomg(svl)) {
+            bool auvok = SvIsUV(svl);
+            bool buvok = SvIsUV(svr);
+            UV alow;
+            UV blow;
+            UV product;
+
+            if (auvok) {
+                alow = SvUVX(svl);
+            } else {
+                const IV aiv = SvIVX(svl);
+                if (aiv >= 0) {
+                    alow = aiv;
+                    auvok = TRUE; /* effectively it's a UV now */
+                } else {
+                    /* abs, auvok == false records sign */
+                    alow = NEGATE_2UV(aiv);
+                }
+            }
+            if (buvok) {
+                blow = SvUVX(svr);
+            } else {
+                const IV biv = SvIVX(svr);
+                if (biv >= 0) {
+                    blow = biv;
+                    buvok = TRUE; /* effectively it's a UV now */
+                } else {
+                    /* abs, buvok == false records sign */
+                    blow = NEGATE_2UV(biv);
+                }
+            }
+
+            if (!my_uv_mul_overflow(alow, blow, &product)) {
+                if (auvok == buvok) {
+                    /* -ve * -ve or +ve * +ve gives a +ve result.  */
+                  sv_setuv(out, product);
+                  return;
+                } else if (product <= ABS_IV_MIN) {
+                    /* -ve result, which could overflow an IV  */
+                  sv_setiv(out, NEGATE_2IV(product));
+                  return;
+                } /* else drop to NVs below. */
+            } /* ahigh && bhigh */
+        } /* SvIOK(svl) */
+    } /* SvIOK(svr) */
+#endif
+    {
+      NV left  = SvNV_nomg(svl);
+      NV right = SvNV_nomg(svr);
+      NV result = left * right;
+
+#if defined(__sgi) && defined(USE_LONG_DOUBLE) && LONG_DOUBLEKIND == LONG_DOUBLE_IS_DOUBLEDOUBLE_128_BIT_BE_BE && NVSIZE == 16
+      if (Perl_isinf(result)) {
+          Zero((U8*)&result + 8, 8, U8);
+      }
+#endif
+      sv_setnv(out, result);
+      return;
+    }
 }
 
 static inline SV *

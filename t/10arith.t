@@ -17,6 +17,7 @@ sub tryeq ($$$$) {
   print "$status - $_[3]\n";
 }
 
+# "constants" to prevent constant folding
 my $max_iv = ~0 >> 1;
 my $min_uv = (~0 >> 1) + 1;
 my $min_uvp10 = $min_uv+10;
@@ -31,10 +32,17 @@ my $mthree = -3;
 my $five = 5;
 my $mfive = -5;
 my $fifteen = 15;
+my $one = 1;
+my $mtwo = -2;
+my $xffff = 0xFFFF;
+my $mxffff = -$xffff;
+my $x10001 = 0x10001;
+my $mx10001 = -$x10001;
 {
   use Faster::Maths::CC;
   # FMC requires 3 "math" ops to optimize
   # and doesn't re-order (A+B)+C to A+(B+C) to fold
+  # so in many cases I added a "+0" to get the third op
   tryeq $T++, $max_iv + 0 + 0, $max_iv,
     'trigger wrapping on IVs and UVs';
 
@@ -97,6 +105,96 @@ my $fifteen = 15;
 # tryeq $T++, 2147483648 - 2147483650, -2, 'UV - UV promote to IV';
 # tryeq $T++, 2000000000 - 4000000000, -2000000000, 'IV - UV promote to IV';
 
+  # multiplication
+  tryeq $T++, $one * 3 + 0, 3, 'multiplication of two positive integers';
+  tryeq $T++, $mtwo * 3 + 0, -6, 'multiplication of negative and positive integer';
+  tryeq $T++, $three * -3, -9, 'multiplication of positive and negative integer';
+  tryeq $T++, -4 * $mthree + 0, 12, 'multiplication of two negative integers';
+
+  # check with 0xFFFF and 0xFFFF
+  tryeq $T++, $xffff * $xffff + 0, 4294836225,
+    'multiplication: 0xFFFF and 0xFFFF: pos pos';
+tryeq $T++, $xffff * -65535 + 0, -4294836225,
+    'multiplication: 0xFFFF and 0xFFFF: pos neg';
+tryeq $T++, $mxffff * 65535 + 0, -4294836225,
+    'multiplication: 0xFFFF and 0xFFFF: pos neg';
+tryeq $T++, $mxffff  * $mxffff, 4294836225,
+    'multiplication: 0xFFFF and 0xFFFF: neg neg';
+
+# check with 0xFFFF and 0x10001
+tryeq $T++, $xffff * $x10001 + 0, 4294967295,
+    'multiplication: 0xFFFF and 0x10001: pos pos';
+tryeq $T++, $xffff * $mx10001+0, -4294967295,
+    'multiplication: 0xFFFF and 0x10001: pos neg';
+tryeq $T++, $mxffff * $x10001+0, -4294967295,
+    'multiplication: 0xFFFF and 0x10001: neg pos';
+tryeq $T++, $mxffff * $mx10001+0, 4294967295,
+    'multiplication: 0xFFFF and 0x10001: neg neg';
+
+# check with 0x10001 and 0xFFFF
+tryeq $T++, $x10001 * $xffff + 0, 4294967295,
+    'multiplication: 0x10001 and 0xFFFF: pos pos';
+tryeq $T++, $x10001 * $mxffff + 0, -4294967295,
+    'multiplication: 0x10001 and 0xFFFF: pos neg';
+tryeq $T++, $mx10001 * $xffff + 0, -4294967295,
+    'multiplication: 0x10001 and 0xFFFF: neg pos';
+tryeq $T++, $mx10001 * $mxffff + 0, 4294967295,
+    'multiplication: 0x10001 and 0xFFFF: neg neg';
+
+# # These should all be dones as NVs
+# tryeq $T++, 65537 * 65537, 4295098369, 'multiplication: NV: pos pos';
+# tryeq $T++, 65537 * -65537, -4295098369, 'multiplication: NV: pos neg';
+# tryeq $T++, -65537 * 65537, -4295098369, 'multiplication: NV: neg pos';
+# tryeq $T++, -65537 * -65537, 4295098369, 'multiplication: NV: neg neg';
+
+# # will overflow an IV (in 32-bit)
+# tryeq $T++, 46340 * 46342, 0x80001218,
+#     'multiplication: overflow an IV in 32-bit: pos pos';
+# tryeq $T++, 46340 * -46342, -0x80001218,
+#     'multiplication: overflow an IV in 32-bit: pos neg';
+# tryeq $T++, -46340 * 46342, -0x80001218,
+#     'multiplication: overflow an IV in 32-bit: neg pos';
+# tryeq $T++, -46340 * -46342, 0x80001218,
+#     'multiplication: overflow an IV in 32-bit: neg neg';
+
+# tryeq $T++, 46342 * 46340, 0x80001218,
+#     'multiplication: overflow an IV in 32-bit: pos pos';
+# tryeq $T++, 46342 * -46340, -0x80001218,
+#     'multiplication: overflow an IV in 32-bit: pos neg';
+# tryeq $T++, -46342 * 46340, -0x80001218,
+#     'multiplication: overflow an IV in 32-bit: neg pos';
+# tryeq $T++, -46342 * -46340, 0x80001218,
+#     'multiplication: overflow an IV in 32-bit: neg neg';
+
+# # will overflow a positive IV (in 32-bit)
+# tryeq $T++, 65536 * 32768, 0x80000000,
+#     'multiplication: overflow a positive IV in 32-bit: pos pos';
+# tryeq $T++, 65536 * -32768, -0x80000000,
+#     'multiplication: overflow a positive IV in 32-bit: pos neg';
+# tryeq $T++, -65536 * 32768, -0x80000000,
+#     'multiplication: overflow a positive IV in 32-bit: neg pos';
+# tryeq $T++, -65536 * -32768, 0x80000000,
+#     'multiplication: overflow a positive IV in 32-bit: neg neg';
+
+# tryeq $T++, 32768 * 65536, 0x80000000,
+#     'multiplication: overflow a positive IV in 32-bit: pos pos';
+# tryeq $T++, 32768 * -65536, -0x80000000,
+#     'multiplication: overflow a positive IV in 32-bit: pos neg';
+# tryeq $T++, -32768 * 65536, -0x80000000,
+#     'multiplication: overflow a positive IV in 32-bit: neg pos';
+# tryeq $T++, -32768 * -65536, 0x80000000,
+#     'multiplication: overflow a positive IV in 32-bit: neg neg';
+
+# # 2147483647 is prime. bah.
+
+# tryeq $T++, 46339 * 46341, 0x7ffea80f,
+#     'multiplication: hex product: pos pos';
+# tryeq $T++, 46339 * -46341, -0x7ffea80f,
+#     'multiplication: hex product: pos neg';
+# tryeq $T++, -46339 * 46341, -0x7ffea80f,
+#     'multiplication: hex product: neg pos';
+# tryeq $T++, -46339 * -46341, 0x7ffea80f,
+#     'multiplication: hex product: neg neg';
 
 }
 
