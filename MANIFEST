@@ -12,6 +12,9 @@ README.md
 share/header.c
 t/00use.t
 t/01apis.t
+t/10arith.t
 t/20maths.t
+t/30overload.t
+t/40code.t
 t/95benchmark.t
 t/99pod.t

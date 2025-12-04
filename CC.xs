@@ -362,7 +362,9 @@ struct CodeFragment {
       PADOFFSET pad_index = std::get<PadSv>(arg).index;
       auto search = pad_locals.find(pad_index);
       if (search == pad_locals.end()) {
-        ArgType result{make_local()};
+        auto loc = make_local();
+        ArgType result{loc};
+        pad_locals.emplace(pad_index, loc.local_index);
         *this << "SV *" << result << " = " << arg << ";\n";
         return result;
       }
