@@ -255,6 +255,14 @@ If set to non-zero the build directory for the generated XS module
 isn't cleaned up on exit and the path to the build directory will be
 written to STDERR.
 
+=item C<PERL_FMC_MAKEFILEPL>
+
+Extra options passed to F<Makefile.PL>.  For example you might set:
+
+  PERL_FMC_MAKEFILEPL="OPTIMIZE='-O0 -ggdb3'"
+
+If you want to use a debugger on the generated XS code.
+
 =back
 
 =head1 AUTHOR
