@@ -97,6 +97,25 @@ fast_sv_setnv(pTHX_ SV *sv, NV n) {
         sv_setnv_mg(sv, n);
 }
 
+// adapted from TARGu()
+static inline void
+fast_sv_setuv(pTHX_ SV *sv, UV u) {
+  if (LIKELY(
+              ((SvFLAGS(sv) & (SVTYPEMASK|SVf_THINKFIRST|SVf_IVisUV)) == SVt_IV)
+              && (u <= (UV)IV_MAX))) {
+    /* Cheap SvIOK_only().
+     * Assert that flags which SvIOK_only() would test or
+     * clear can't be set, because we're SVt_IV */
+    assert(!(SvFLAGS(sv) &
+             (SVf_OOK|SVf_UTF8|(SVf_OK & ~(SVf_IOK|SVp_IOK)))));
+    SvFLAGS(sv) |= (SVf_IOK|SVp_IOK);
+    /* SvIV_set() where sv_any points to head */
+    sv->sv_u.svu_iv = u;
+  }
+  else
+    sv_setuv_mg(sv, u);
+}
+
 static inline bool
 my_iv_add_may_overflow(IV il, IV ir, IV *result) {
 #  if defined(I_STDCKDINT) && !IV_ADD_SUB_OVERFLOW_IS_EXPENSIVE
@@ -701,8 +720,114 @@ do_multiply(pTHX_ SV *out, SV *left, SV *right, int amagic_flags,
 }
 
 static void
-do_divide_raw(pTHX_ SV *out, SV *left, SV *right) {
-    sv_setnv(out, SvNV_nomg(left) / SvNV_nomg(right));
+do_divide_raw(pTHX_ SV *out, SV *svl, SV *svr) {
+    /* Only try to do UV divide first
+       if ((SLOPPYDIVIDE is true) or
+           (PERL_PRESERVE_IVUV is true and one or both SV is a UV too large
+            to preserve))
+       The assumption is that it is better to use floating point divide
+       whenever possible, only doing integer divide first if we can't be sure.
+       If NV_PRESERVES_UV is true then we know at compile time that no UV
+       can be too large to preserve, so don't need to compile the code to
+       test the size of UVs.  */
+
+#if defined(SLOPPYDIVIDE) || (defined(PERL_PRESERVE_IVUV) && !defined(NV_PRESERVES_UV))
+#  define PERL_TRY_UV_DIVIDE
+    /* ensure that 20./5. == 4. */
+#endif
+
+#ifdef PERL_TRY_UV_DIVIDE
+    if (SvIV_please_nomg(svr) && SvIV_please_nomg(svl)) {
+            bool left_non_neg = SvIsUV(svl);
+            bool right_non_neg = SvIsUV(svr);
+            UV left;
+            UV right;
+
+            if (right_non_neg) {
+                right = SvUVX(svr);
+            }
+            else {
+                const IV biv = SvIVX(svr);
+                if (biv >= 0) {
+                    right = biv;
+                    right_non_neg = TRUE; /* effectively it's a UV now */
+                }
+                else {
+                    right = NEGATE_2UV(biv);
+                }
+            }
+            /* historically undef()/0 gives a "Use of uninitialized value"
+               warning before dieing, hence this test goes here.
+               If it were immediately before the second SvIV_please, then
+               DIE() would be invoked before left was even inspected, so
+               no inspection would give no warning.  */
+            if (right == 0)
+                croak("Illegal division by zero");
+
+            if (left_non_neg) {
+                left = SvUVX(svl);
+            }
+            else {
+                const IV aiv = SvIVX(svl);
+                if (aiv >= 0) {
+                    left = aiv;
+                    left_non_neg = TRUE; /* effectively it's a UV now */
+                }
+                else {
+                    left = NEGATE_2UV(aiv);
+                }
+            }
+
+            if (left >= right
+#ifdef SLOPPYDIVIDE
+                /* For sloppy divide we always attempt integer division.  */
+#else
+                /* Otherwise we only attempt it if either or both operands
+                   would not be preserved by an NV.  If both fit in NVs
+                   we fall through to the NV divide code below.  However,
+                   as left >= right to ensure integer result here, we know that
+                   we can skip the test on the right operand - right big
+                   enough not to be preserved can't get here unless left is
+                   also too big.  */
+
+                && (left > ((UV)1 << NV_PRESERVES_UV_BITS))
+#endif
+                ) {
+                /* Integer division can't overflow, but it can be imprecise.  */
+
+                /* Modern compilers optimize division followed by
+                 * modulo into a single div instruction */
+                const UV result = left / right;
+                if (left % right == 0) {
+                    /* result is valid */
+                    if (left_non_neg == right_non_neg) {
+                        /* signs identical, result is positive.  */
+                      fast_sv_setuv(aTHX_ out, result);
+                      return;
+                    }
+                    /* 2s complement assumption */
+                    if (result <= ABS_IV_MIN)
+                      fast_sv_setiv(aTHX_ out, NEGATE_2IV(result));
+                    else {
+                        /* It's exact but too negative for IV. */
+                      fast_sv_setnv(aTHX_ out, -(NV)result);
+                    }
+                    return;
+                } /* tried integer divide but it was not an integer result */
+            } /* else (PERL_ABS(result) < 1.0) or (both UVs in range for NV) */
+    } /* one operand wasn't SvIOK */
+#endif /* PERL_TRY_UV_DIVIDE */
+    {
+        NV left  = SvNV_nomg(svl);
+        NV right = SvNV_nomg(svr);
+#if defined(NAN_COMPARE_BROKEN) && defined(Perl_isnan)
+        if (! Perl_isnan(right) && right == 0.0)
+#else
+        if (right == 0.0)
+#endif
+            croak("Illegal division by zero");
+        fast_sv_setnv(aTHX_ out, left / right);
+    }
 }
 
 static inline SV *

@@ -17,9 +17,25 @@ sub tryeq ($$$$) {
   print "$status - $_[3]\n";
 }
 
+sub tryeq_sloppy ($$$$) {
+  my $status;
+  if ($_[1] == $_[2]) {
+    $status = "ok $_[0]";
+  } else {
+    my $error = abs (($_[1] - $_[2]) / $_[1]);
+    if ($error < 1e-9) {
+      $status = "ok $_[0] # $_[1] is close to $_[2], \$^O eq $^O";
+    } else {
+      $status = "not ok $_[0] # $_[1] != $_[2]";
+    }
+  }
+  print "$status - $_[3]\n";
+}
+
 # "constants" to prevent constant folding
 my $max_iv = ~0 >> 1;
 my $min_uv = (~0 >> 1) + 1;
+my $mmin_uv = -$min_uv;
 my $min_uvp10 = $min_uv+10;
 my $max_uv = ~0;
 my $max_uvm1 = $max_uv - 1;
@@ -38,6 +54,16 @@ my $xffff = 0xFFFF;
 my $mxffff = -$xffff;
 my $x10001 = 0x10001;
 my $mx10001 = -$x10001;
+my $twentyeight = 28;
+my $mtwentyeight = -28;
+my $stwenty_m = "20. ";
+my $twopfive = 2.5;
+my $threepfive = 3.5;
+my $mfourpfive = -4.5;
+my $mfivepfive = -5.5;
+my $twoexp64 = 18446744073709551616;
+my $twoexp63 = 9223372036854775808;
+my $twoexp32 = 4294967296;
 {
   use Faster::Maths::CC;
   # FMC requires 3 "math" ops to optimize
@@ -196,6 +222,43 @@ tryeq $T++, $mx10001 * $mxffff + 0, 4294967295,
 # tryeq $T++, -46339 * -46341, 0x7ffea80f,
 #     'multiplication: hex product: neg neg';
 
+# division
+tryeq $T++, $twentyeight/14+0, 2, 'division of two positive integers';
+tryeq $T++, $twentyeight/-7+0, -4, 'division of positive integer by negative';
+tryeq $T++, $mtwentyeight/4+0, -7, 'division of negative integer by positive';
+tryeq $T++, $mtwentyeight/-2+0, 14, 'division of negative integer by negative';
+
+tryeq $T++, $min_uv/1+0, $min_uv,
+    'division of positive hex by positive integer';
+tryeq $T++, $min_uv/-1+0, -$min_uv,
+    'division of positive hex by negative integer';
+tryeq $T++, $mmin_uv/1+0, $mmin_uv,
+    'division of negative hex by negative integer';
+tryeq $T++, $mmin_uv/-1, $min_uv,
+    'division of negative hex by positive integer';
+
+# The example for sloppy divide, rigged to avoid the peephole optimiser.
+tryeq_sloppy $T++, $stwenty_m / "5." + 0, 4, 'division of floating point without fractional part';
+
+tryeq $T++, $twopfive / 2 + 0, 1.25,
+    'division of positive floating point by positive integer';
+tryeq $T++, $threepfive / -2 + 0, -1.75,
+    'division of positive floating point by negative integer';
+tryeq $T++, $mfourpfive / 2 + 0, -2.25,
+    'division of negative floating point by positive integer';
+tryeq $T++, $mfivepfive / -2 + 0, 2.75,
+    'division of negative floating point by negative integer';
+
+# Bluuurg if your floating point can not accurately cope with powers of 2
+# [I suspect this is parsing string->float problems, not actual arith]
+tryeq_sloppy $T++, $twoexp64/1+0, $twoexp64,
+    'division of very large number by 1'; # Bluuurg
+tryeq_sloppy $T++, $twoexp64/2+0, $twoexp63,
+    'division of very large number by 2';
+tryeq_sloppy $T++, $twoexp64/$twoexp32+0, $twoexp32,
+    'division of two very large numbers';
+tryeq_sloppy $T++, $twoexp64/$twoexp63+0, 2,
+    'division of two very large numbers';
 }
 
 print "1..", $T-1, "\n";
