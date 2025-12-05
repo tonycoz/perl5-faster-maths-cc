@@ -259,6 +259,19 @@ tryeq_sloppy $T++, $twoexp64/$twoexp32+0, $twoexp32,
     'division of two very large numbers';
 tryeq_sloppy $T++, $twoexp64/$twoexp63+0, 2,
     'division of two very large numbers';
+
+  # trigger various attempts to negate IV_MIN
+  
+
+tryeq $T++,  $min_uv / -$min_uv + 0, -1, '(IV_MAX+1) / IV_MIN';
+tryeq $T++, -$min_uv /  $min_uv + 0, -1, 'IV_MIN / (IV_MAX+1)';
+tryeq $T++,  $min_uv / -1 + 0, -$min_uv, '(IV_MAX+1) / -1';
+# tryeq $T++,           0 % -0x80000000,  0, '0 % IV_MIN';
+# tryeq $T++, -0x80000000 % -0x80000000,  0, 'IV_MIN % IV_MIN';
+
+# tryeq $T++,  0x3ffffffe % -0xc0000000, -0x80000002, 'modulo is (IV_MIN-2)';
+# tryeq $T++,  0x3fffffff % -0xc0000000, -0x80000001, 'modulo is (IV_MIN-1)';
+# tryeq $T++,  0x40000000 % -0xc0000000, -0x80000000, 'modulo is IV_MIN';
 }
 
 print "1..", $T-1, "\n";

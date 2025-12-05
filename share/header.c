@@ -62,6 +62,33 @@ my_try_amagic_bin(pTHX_ SV *out, SV **left, SV **right, int method, int flags,
       ? do_try_amagic_bin(aTHX_ out, left, right, method, flags, mutator) : NULL;
 }
 
+static SV *
+do_try_amagic_un(pTHX_ SV **psv, int method, int flags) {
+    if (SvAMAGIC(*psv)) {
+        OP *saved = PL_op; /* to get scalar context /cry */
+        PL_op = NULL;
+        SV *result = amagic_call(*psv, NULL, method,
+                                 flags | AMGf_unary | AMGf_noright);
+        PL_op = saved;
+        if (result)
+            return result;
+
+        if (flags & AMGf_numeric) {
+            *psv = my_sv_2num(aTHX_ *psv);
+        }
+    }
+    return NULL;
+}
+
+PERL_STATIC_INLINE SV *
+my_try_amagic_un(pTHX_ SV **psv, int method, int flags) {
+    /* eventually this will happen during code gen */
+    if (UNLIKELY(PL_hints & HINT_NO_AMAGIC))
+        return NULL;
+    return (UNLIKELY(((SvFLAGS(*psv)) & SVf_ROK)) == SVf_ROK)
+      ? do_try_amagic_un(aTHX_ psv, method, flags) : NULL;
+}
+
 /* adapted from TARGi() */
 static inline void
 fast_sv_setiv(pTHX_ SV *sv, IV iv) {
@@ -843,6 +870,91 @@ do_divide(pTHX_ SV *out, SV *left, SV *right, int amagic_flags,
         return result;
     do_divide_raw(aTHX_ out, left, right);
     return out;
+}
+
+static bool
+my_negate_string(pTHX_ SV *out, SV *sv) {
+    /* based on S_negate_string() in pp.c */
+    assert(SvPOKp(sv));
+    if (SvNIOK(sv) || (!SvPOK(sv) && SvNIOKp(sv)))
+        return false;
+
+    STRLEN len;
+    const char *s = SvPV_nomg_const(sv, len);
+    if (isIDFIRST(*s)) {
+        if (LIKELY(out != sv)) {
+            sv_setpvs(out, "-");
+            sv_catsv(out, sv);
+        } else {
+            sv_insert_flags(out, 0, 0, "-", 1, 0);
+        }
+    }
+    else if (*s == '+' || (*s == '-' && !looks_like_number(sv))) {
+        sv_setsv_nomg(out, sv);
+        *SvPV_force_nomg(out, len) = *s == '-' ? '+' : '-';
+    }
+    else
+        return false;
+    SvSETMAGIC(out);
+    return true;
+}
+
+static void
+do_negate_low(pTHX_ SV *out, SV *sv) {
+    /* magic should already be called */
+    /* overloading (including sv_2num() if overloading is disabled)
+       should already have been resolved
+    */
+    /* based on pp_negate */
+    assert(!SvROK(sv));
+    if (SvPOKp(sv) && my_negate_string(aTHX_ out, sv))
+        return;
+
+    {
+
+        if (SvIOK(sv)) {
+            /* It's publicly an integer */
+        oops_its_an_int:
+            if (SvIsUV(sv)) {
+                if (SvUVX(sv) <= ABS_IV_MIN) {
+                    fast_sv_setiv(aTHX_ out, NEGATE_2IV(SvUVX(sv)));
+                    return;
+                }
+            }
+#ifdef PERL_PRESERVE_IVUV
+            else if (SvIVX(sv) < 0) {
+                fast_sv_setuv(aTHX_ out, NEGATE_2UV(SvIVX(sv)));
+                return;
+            }
+            else {
+                fast_sv_setiv(aTHX_ out, -SvIVX(sv));
+                return;
+            }
+#else
+            else if (SvIVX(sv) != IV_MIN) {
+                fast_sv_setiv(aTHX_ out, -SvIVX(sv));
+                return;
+            }
+#endif
+        }
+        if (SvNIOKp(sv) && (SvNIOK(sv) || !SvPOK(sv)))
+            fast_sv_setnv(aTHX_ out, -SvNV_nomg(sv));
+        else if (SvPOKp(sv) && SvIV_please_nomg(sv))
+                  goto oops_its_an_int;
+        else
+            fast_sv_setnv(aTHX_ out, -SvNV_nomg(sv));
+    }
+}
+
+static inline SV *
+do_negate(pTHX_ SV *out, SV *sv) {
+  SvGETMAGIC(sv);
+  SV *result = my_try_amagic_un(aTHX_ &sv, neg_amg, AMGf_numeric);
+  if (result)
+    return result;
+
+  do_negate_low(aTHX_ out, sv);
+  return out;
 }
 
 /* API END */
