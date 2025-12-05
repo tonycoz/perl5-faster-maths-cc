@@ -24,6 +24,14 @@ my_sv_2num(pTHX_ SV *sv) {
     return sv_2mortal(newSVuv(PTR2UV(SvRV(sv))));
 }
 
+static inline SV *
+my_sv_2num_noov(pTHX_ SV *sv) {
+    if (!SvROK(sv))
+        return sv;
+
+    return sv_2mortal(newSVuv(PTR2UV(SvRV(sv))));
+}
+
 /* The API try_amagic() functions work with the stack, which
    we don't here.
 */
@@ -463,6 +471,16 @@ do_add(pTHX_ SV *out, SV *left, SV *right, int amagic_flags, bool mutator) {
     return out;
 }
 
+static inline void
+do_add_noov(pTHX_ SV *out, SV *svl, SV *svr) {
+    SvGETMAGIC(svl);
+    if (svl != svr)
+        SvGETMAGIC(svr);
+    svl = my_sv_2num_noov(aTHX_ svl);
+    svr = my_sv_2num_noov(aTHX_ svr);
+    do_add_raw(aTHX_ out, svl, svr);
+}
+
 static void
 do_subtract_raw(pTHX_ SV *out, SV *svl, SV *svr) {
     NV nv;
@@ -626,6 +644,16 @@ do_subtract(pTHX_ SV *out, SV *left, SV *right, int amagic_flags,
     return out;
 }
 
+static inline void
+do_subtract_noov(pTHX_ SV *out, SV *svl, SV *svr) {
+    SvGETMAGIC(svl);
+    if (svl != svr)
+        SvGETMAGIC(svr);
+    svl = my_sv_2num_noov(aTHX_ svl);
+    svr = my_sv_2num_noov(aTHX_ svr);
+    do_subtract_raw(aTHX_ out, svl, svr);
+}
+
 static void
 do_multiply_raw(pTHX_ SV *out, SV *svl, SV *svr) {
 #ifdef PERL_PRESERVE_IVUV
@@ -744,6 +772,16 @@ do_multiply(pTHX_ SV *out, SV *left, SV *right, int amagic_flags,
         return result;
     do_multiply_raw(aTHX_ out, left, right);
     return out;
+}
+
+static inline void
+do_multiply_noov(pTHX_ SV *out, SV *svl, SV *svr) {
+    SvGETMAGIC(svl);
+    if (svl != svr)
+        SvGETMAGIC(svr);
+    svl = my_sv_2num_noov(aTHX_ svl);
+    svr = my_sv_2num_noov(aTHX_ svr);
+    do_multiply_raw(aTHX_ out, svl, svr);
 }
 
 static void
@@ -870,6 +908,16 @@ do_divide(pTHX_ SV *out, SV *left, SV *right, int amagic_flags,
         return result;
     do_divide_raw(aTHX_ out, left, right);
     return out;
+}
+
+static inline void
+do_divide_noov(pTHX_ SV *out, SV *svl, SV *svr) {
+    SvGETMAGIC(svl);
+    if (svl != svr)
+        SvGETMAGIC(svr);
+    svl = my_sv_2num_noov(aTHX_ svl);
+    svr = my_sv_2num_noov(aTHX_ svr);
+    do_divide_raw(aTHX_ out, svl, svr);
 }
 
 static bool

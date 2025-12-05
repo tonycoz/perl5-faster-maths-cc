@@ -339,7 +339,8 @@ operator <<(CodeFragment &os, auto const &v);
 /* Used to generate code for an op tree fragment */
 struct CodeFragment {
   CodeFragment(const COP *cop, OP *next_op):
-    line(CopLINE(cop)), file(CopFILE(cop)) {
+    line(CopLINE(cop)), file(CopFILE(cop)),
+    overloading((CopHINTS_get(cop) & HINT_NO_AMAGIC) == 0) {
     ops.push_back(next_op);
   }
   // save an op containing a constant and return an appropriate
@@ -378,6 +379,7 @@ struct CodeFragment {
 
   std::ostringstream code; // generated code
   std::vector<OP*> ops;    // ops to be saved in the aux block
+  bool overloading;        // is overloading enabled?
 
   // hash-in-perl-speak of PadSvs we've made locals for
   std::unordered_map<PADOFFSET, int> pad_locals;
@@ -527,20 +529,16 @@ code_finalize(pTHX_ CodeFragment &code, Stack &stack, OP *start,
   prev->op_next = retop;
 }
 
-// generate code for a binop
-void
-add_binop(pTHX_ OP *o, CodeFragment &code, Stack &stack, std::string_view opname) {
-  auto right = code.simplify_val(stack.pop());
-  auto left = code.simplify_val(stack.pop());
-  auto out = o->op_flags & OPf_STACKED ? left : code.simplify_val(PadSv{o->op_targ});
-
+ArgType
+binop_normal(pTHX_ OP *o, std::string_view opname, CodeFragment &code,
+             const ArgType &out, const ArgType &left, const ArgType &right) {
   bool mutator =
     (PL_opargs[o->op_type] & OA_TARGLEX)
     && (o->op_private & OPpTARGET_MY);
 
   // the result might be in out, or it might be in a mortal
   // so just some SV
-  auto result = code.make_local();
+  ArgType result = code.make_local();
   code << "SV *" << result << " = "
        << opname << "(aTHX_ " << out << ", "
        << left << ", "
@@ -550,9 +548,34 @@ add_binop(pTHX_ OP *o, CodeFragment &code, Stack &stack, std::string_view opname
   }
   code << ", " << mutator << ");\n";
 
+  return result;
+}
+
+ArgType
+binop_noov(pTHX_ std::string_view opname, CodeFragment &code,
+           const ArgType &out, const ArgType &left,
+           const ArgType &right) {
+    code << opname << "_noov" << "(aTHX_ "
+         << out << ", "
+         << left << ", "
+         << right << ");\n";
+    return out;
+}
+
+// generate code for a binop
+void
+add_binop(pTHX_ OP *o, CodeFragment &code, Stack &stack, std::string_view opname) {
+  auto right = code.simplify_val(stack.pop());
+  auto left = code.simplify_val(stack.pop());
+  auto out = o->op_flags & OPf_STACKED ? left : code.simplify_val(PadSv{o->op_targ});
+
+  ArgType result = code.overloading
+    ? binop_normal(aTHX_ o, opname, code, out, left, right)
+    : binop_noov(aTHX_ opname, code, out, left, right);
+
   // only push a result if non-void
   if (OP_GIMME(o, OPf_WANT_SCALAR) != OPf_WANT_VOID)
-    stack.push(result);
+    stack.push(std::move(result));
 }
 
 void

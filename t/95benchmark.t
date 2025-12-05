@@ -53,8 +53,26 @@ sub julia_faster
    return $count;
 }
 
+sub julia_noov
+{
+   use Faster::Maths::CC;
+   no overloading;
+
+   my ($zr, $zi) = @_;
+   my ($cr, $ci) = @$C;
+
+   my $count = $MAXCOUNT;
+   while( $count and $zr*$zr + $zi*$zi < 2*2 ) {
+      ($zr, $zi) = ( ($zr*$zr - $zi*$zi + $cr), 2*($zr*$zi) + $ci );
+      --$count or return undef;
+   }
+
+   return $count;
+}
+
 my $standard_elapsed = 0;
 my $faster_elapsed   = 0;
+my $noov_elapsed     = 0;
 
 # To reduce the influence of bursts of timing noise, interleave many small runs
 # of each type.
@@ -72,6 +90,11 @@ foreach ( 1 .. 20 ) {
       $ret = julia_faster( @$Z0 ) for 1 .. $COUNT;
       $ret == $ESCAPE_VAL or die "Expected $ESCAPE_VAL from faster got $ret\n";
    };
+   $noov_elapsed += measure {
+      my $ret;
+      $ret = julia_noov( @$Z0 ) for 1 .. $COUNT;
+      $ret == $ESCAPE_VAL or die "Expected $ESCAPE_VAL from faster got $ret\n";
+   };
 }
 
 pass( "Benchmarked" );
@@ -84,6 +107,16 @@ else {
    my $speedup = ( $standard_elapsed - $faster_elapsed ) / $standard_elapsed;
    diag( sprintf "Standard took %.3fsec, this was %d%% faster at %.3fsec",
       $standard_elapsed, $speedup * 100, $faster_elapsed );
+ }
+
+if( $noov_elapsed > $standard_elapsed ) {
+   diag( sprintf "Standard took %.3fsec, ** this was SLOWER at %.3fsec **",
+      $standard_elapsed, $noov_elapsed );
+}
+else {
+   my $speedup = ( $standard_elapsed - $noov_elapsed ) / $standard_elapsed;
+   diag( sprintf "Standard took %.3fsec, noov was %d%% faster at %.3fsec",
+      $standard_elapsed, $speedup * 100, $noov_elapsed );
  }
 
 ok(@Faster::Maths::CC::collection, "we compiled something");
