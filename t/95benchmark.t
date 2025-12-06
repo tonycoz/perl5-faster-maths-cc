@@ -70,9 +70,27 @@ sub julia_noov
    return $count;
 }
 
+sub julia_float
+{
+   use Faster::Maths::CC "+float";
+   no overloading;
+
+   my ($zr, $zi) = @_;
+   my ($cr, $ci) = @$C;
+
+   my $count = $MAXCOUNT;
+   while( $count and $zr*$zr + $zi*$zi < 2*2 ) {
+      ($zr, $zi) = ( ($zr*$zr - $zi*$zi + $cr), 2*($zr*$zi) + $ci );
+      --$count or return undef;
+   }
+
+   return $count;
+}
+
 my $standard_elapsed = 0;
 my $faster_elapsed   = 0;
 my $noov_elapsed     = 0;
+my $float_elapsed    = 0;
 
 # To reduce the influence of bursts of timing noise, interleave many small runs
 # of each type.
@@ -95,29 +113,32 @@ foreach ( 1 .. 20 ) {
       $ret = julia_noov( @$Z0 ) for 1 .. $COUNT;
       $ret == $ESCAPE_VAL or die "Expected $ESCAPE_VAL from faster got $ret\n";
    };
+   $float_elapsed += measure {
+      my $ret;
+      $ret = julia_float( @$Z0 ) for 1 .. $COUNT;
+      $ret == $ESCAPE_VAL or die "Expected $ESCAPE_VAL from faster got $ret\n";
+   };
 }
 
 pass( "Benchmarked" );
 
-if( $faster_elapsed > $standard_elapsed ) {
-   diag( sprintf "Standard took %.3fsec, ** this was SLOWER at %.3fsec **",
-      $standard_elapsed, $faster_elapsed );
+sub summary {
+  my ($name, $elapsed) = @_;
+  
+  if( $elapsed > $standard_elapsed ) {
+    diag( sprintf "Standard took %.3fsec, ** $name was SLOWER at %.3fsec **",
+          $standard_elapsed, $elapsed );
+  }
+  else {
+    my $speedup = ( $standard_elapsed - $elapsed ) / $standard_elapsed;
+    diag( sprintf "Standard took %.3fsec, $name was %d%% faster at %.3fsec",
+          $standard_elapsed, $speedup * 100, $elapsed );
+  }
 }
-else {
-   my $speedup = ( $standard_elapsed - $faster_elapsed ) / $standard_elapsed;
-   diag( sprintf "Standard took %.3fsec, this was %d%% faster at %.3fsec",
-      $standard_elapsed, $speedup * 100, $faster_elapsed );
- }
 
-if( $noov_elapsed > $standard_elapsed ) {
-   diag( sprintf "Standard took %.3fsec, ** this was SLOWER at %.3fsec **",
-      $standard_elapsed, $noov_elapsed );
-}
-else {
-   my $speedup = ( $standard_elapsed - $noov_elapsed ) / $standard_elapsed;
-   diag( sprintf "Standard took %.3fsec, noov was %d%% faster at %.3fsec",
-      $standard_elapsed, $speedup * 100, $noov_elapsed );
- }
+summary("faster", $faster_elapsed);
+summary("no overload", $noov_elapsed);
+summary("float", $float_elapsed);
 
 ok(@Faster::Maths::CC::collection, "we compiled something");
 

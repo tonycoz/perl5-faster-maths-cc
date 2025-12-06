@@ -331,6 +331,12 @@ operator <<(std::ostream &out, const Stack &s) {
   return out;
 }
 
+inline bool
+cop_bool_config(pTHX_ const COP *o, std::string_view key) {
+  SV *sv = cop_hints_fetch_pvn(cCOPo, key.data(), key.size(), 0, 0);
+  return sv && sv != &PL_sv_placeholder && SvTRUE(sv);
+}
+
 struct CodeFragment;
 
 CodeFragment &
@@ -338,9 +344,10 @@ operator <<(CodeFragment &os, auto const &v);
 
 /* Used to generate code for an op tree fragment */
 struct CodeFragment {
-  CodeFragment(const COP *cop, OP *next_op):
+  CodeFragment(pTHX_ const COP *cop, OP *next_op):
     line(CopLINE(cop)), file(CopFILE(cop)),
-    overloading((CopHINTS_get(cop) & HINT_NO_AMAGIC) == 0) {
+    overloading((CopHINTS_get(cop) & HINT_NO_AMAGIC) == 0),
+    use_float(cop_bool_config(aTHX_ cop, "Faster::Maths::CC/float")) {
     ops.push_back(next_op);
   }
   // save an op containing a constant and return an appropriate
@@ -352,26 +359,28 @@ struct CodeFragment {
     return OpConst{index, op};
   }
   LocalSv
-  make_local() {
+  make_local_sv() {
     return LocalSv{local_count++};
   }
-  // make a local variable representing a PAD_SV(), if that's what
-  // this argument is.
+  LocalSv
+  get_local_sv(const PadSv &psv) {
+      auto search = pad_locals.find(psv.index);
+      if (search == pad_locals.end()) {
+        auto loc = make_local_sv();
+        pad_locals.emplace(psv.index, loc.local_index);
+        *this << "SV *" << loc << " = " << psv << ";\n";
+        return loc;
+      }
+      else {
+        return LocalSv{search->second};
+      }
+  }
+  // simplify an argument into a LocalSv if it's a PadSv to
+  // save PAD_SV() calls
   ArgType
   simplify_val(const ArgType &arg) {
     if (std::holds_alternative<PadSv>(arg)) {
-      PADOFFSET pad_index = std::get<PadSv>(arg).index;
-      auto search = pad_locals.find(pad_index);
-      if (search == pad_locals.end()) {
-        auto loc = make_local();
-        ArgType result{loc};
-        pad_locals.emplace(pad_index, loc.local_index);
-        *this << "SV *" << result << " = " << arg << ";\n";
-        return result;
-      }
-      else {
-        return ArgType{LocalSv{search->second}};
-      }
+      return ArgType{get_local_sv(std::get<PadSv>(arg))};
     }
     else
       return arg;
@@ -380,6 +389,7 @@ struct CodeFragment {
   std::ostringstream code; // generated code
   std::vector<OP*> ops;    // ops to be saved in the aux block
   bool overloading;        // is overloading enabled?
+  bool use_float;          // prefer floating point
 
   // hash-in-perl-speak of PadSvs we've made locals for
   std::unordered_map<PADOFFSET, int> pad_locals;
@@ -538,7 +548,7 @@ binop_normal(pTHX_ OP *o, std::string_view opname, CodeFragment &code,
 
   // the result might be in out, or it might be in a mortal
   // so just some SV
-  ArgType result = code.make_local();
+  ArgType result = code.make_local_sv();
   code << "SV *" << result << " = "
        << opname << "(aTHX_ " << out << ", "
        << left << ", "
@@ -562,15 +572,29 @@ binop_noov(pTHX_ std::string_view opname, CodeFragment &code,
     return out;
 }
 
+ArgType
+binop_float(pTHX_ std::string_view op, CodeFragment &code,
+            const ArgType &out, const ArgType &left,
+            const ArgType &right) {
+  code << "sv_setnv(" << out << ", SvNV("
+       << left << ") "
+       << op << " SvNV("
+       << right << "));\n";
+  return out;
+}
+
 // generate code for a binop
 void
-add_binop(pTHX_ OP *o, CodeFragment &code, Stack &stack, std::string_view opname) {
+add_binop(pTHX_ OP *o, CodeFragment &code, Stack &stack,
+          std::string_view opname, std::string_view op) {
   auto right = code.simplify_val(stack.pop());
   auto left = code.simplify_val(stack.pop());
   auto out = o->op_flags & OPf_STACKED ? left : code.simplify_val(PadSv{o->op_targ});
 
   ArgType result = code.overloading
     ? binop_normal(aTHX_ o, opname, code, out, left, right)
+    : code.use_float
+    ? binop_float(aTHX_ op, code, out, left, right)
     : binop_noov(aTHX_ opname, code, out, left, right);
 
   // only push a result if non-void
@@ -603,19 +627,19 @@ compile_code(pTHX_ CodeFragment &code, OP *start, OP *final, OP *prev)
 
       case OP_ADD:
         // FIXME: SvSETMAGIC() as needed
-        add_binop(aTHX_ o, code, stack, "do_add");
+        add_binop(aTHX_ o, code, stack, "do_add", "+");
         break;
 
       case OP_SUBTRACT:
-        add_binop(aTHX_ o, code, stack, "do_subtract");
+        add_binop(aTHX_ o, code, stack, "do_subtract", "-");
         break;
 
       case OP_MULTIPLY:
-        add_binop(aTHX_ o, code, stack, "do_multiply");
+        add_binop(aTHX_ o, code, stack, "do_multiply", "*");
         break;
 
       case OP_DIVIDE:
-        add_binop(aTHX_ o, code, stack, "do_divide");
+        add_binop(aTHX_ o, code, stack, "do_divide", "/");
         break;
 
       case OP_NEGATE:
@@ -672,7 +696,7 @@ rpeep_for_callcompiled(pTHX_ OP *o, bool init_enabled)
         if (DebugFlags(CCDebugFlags::Debug)) {
           std::cerr << "Trace: calling code gen\n";
         }
-        CodeFragment code{last_cop, o};
+        CodeFragment code{aTHX_ last_cop, o};
         compile_code(aTHX_ code, first, oprev, firstprev);
       }
       else if (DebugFlags(CCDebugFlags::Debug)) {
@@ -757,7 +781,7 @@ rpeep_for_callcompiled(pTHX_ OP *o, bool init_enabled)
           if (DebugFlags(CCDebugFlags::Debug)) {
             std::cerr << "Trace: calling code gen\n";
           }
-          CodeFragment code {last_cop, o};
+          CodeFragment code {aTHX_ last_cop, o};
           compile_code(aTHX_ code, first, oprev, firstprev);
         }
         else if (DebugFlags(CCDebugFlags::Debug)) {

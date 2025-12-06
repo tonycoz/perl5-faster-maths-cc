@@ -13,17 +13,25 @@ use blib ();
 use Devel::PPPort ();
 use File::Spec ();
 use File::ShareDir ();
+use Carp ();
 
 require XSLoader;
 XSLoader::load();
 
-sub import
-{
-   $^H{"Faster::Maths::CC/faster"} = 1;
+sub import {
+    $^H{"Faster::Maths::CC/faster"} = 1;
+    shift;
+    for my $arg (@_) {
+        if ($arg =~ /^([+-])float$/) {
+            $^H{"Faster::Maths::CC/float"} = $1 eq "+";
+        }
+        else {
+            Carp::croak __PACKAGE__, ": Unknown import $arg";
+        }
+    }
 }
 
-sub unimport
-{
+sub unimport {
    $^H{"Faster::Maths::CC/faster"} = 0;
  }
 
