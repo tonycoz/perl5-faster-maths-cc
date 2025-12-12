@@ -32,24 +32,24 @@ sub import {
 }
 
 sub unimport {
-   $^H{"Faster::Maths::CC/faster"} = 0;
- }
+    $^H{"Faster::Maths::CC/faster"} = 0;
+}
 
 my sub DebugFlags {
-  my $key = shift;
-  my $env = $ENV{PERL_FMC_DEBUG}
-    or return;
-  return index($env, $key) >= 0;
+    my $key = shift;
+    my $env = $ENV{PERL_FMC_DEBUG}
+      or return;
+    return index($env, $key) >= 0;
 }
 
 my sub save_file {
-  my ($name, $content) = @_;
+    my ($name, $content) = @_;
 
-  open my $fh, ">", $name
-    or die "Cannot create $name: $!\n";
-  print $fh $content;
-  close $fh
-    or die "Cannot close $name: $!\n";
+    open my $fh, ">", $name
+      or die "Cannot create $name: $!\n";
+    print $fh $content;
+    close $fh
+      or die "Cannot close $name: $!\n";
 }
 
 my sub run {

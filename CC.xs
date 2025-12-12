@@ -12,8 +12,7 @@
 #include <utility>
 #include <unordered_map>
 
-// lazy for now
-//#define PERL_NO_GET_CONTEXT
+#define PERL_NO_GET_CONTEXT
 
 #include "EXTERN.h"
 #include "perl.h"
@@ -94,15 +93,22 @@ struct OpConst {
   OP *op; // used only during C code generation
 };
 
+ struct NullSv {};
+
+    using SourceSv = std::variant<NullSv, StackSv, LocalSv, PadSv>;
+
 /* an SV stored in a C local variable.
    PadSvs are converted into these to save pad lookups.
    Operator results can be these if the result isn't always in a
    PADTMP (as with overloading).
 */
 struct LocalSv {
-  LocalSv(int local_index_): local_index(local_index_){}
-  LocalSv() = delete;
-  int local_index; // SV *variable named l%d
+     LocalSv(int local_index_, const SourceSv &source)
+         : local_index(local_index_), source(source_) {
+     }
+     LocalSv() = delete;
+     int local_index; // SV *variable named l%d
+     SourceSv source;
 };
 
 /* An SV on the C argument stack, we don't know anything about it,
@@ -114,8 +120,38 @@ struct StackSv {
   ssize_t offset; // PL_stack_sp[-offset]
 };
 
+// a number from an OpConst
+struct ConstNv {
+  ConstNv(NV nv_):nv(nv_) {
+  }
+  NV nv;
+};
+
+// a local holding a NV loaded from an Sv
+// or expected to be stored to an NV if needed, which is:
+//  - the value is modified and is named
+//  - the value is pushed on the stack at the end
+struct PadNv {
+  PadNv(int local_index_, const PadSv &psv_)
+    :local_index(local_index_), committed(false), psv(psv_) {
+  }
+  int local_index;
+  bool committed = false;
+  PadSv psv;
+};
+
+// a local NV holding the value from some source SV (or for one)
+struct LocalNv {
+  LocalNv(int local_index_, const SourceSv &source_)
+    :local_index(local_index_), source(source_) {
+  }
+  int local_index;
+  bool committed = false;
+  SourceSv source;
+};
+
 /* Represents an argument on the stack */
-  using ArgType = std::variant<PadSv, OpConst, LocalSv, StackSv>;
+using ArgType = std::variant<PadSv, OpConst, LocalSv, StackSv, LocalNv>;
 
 #if 0 // we may want this again later
 
@@ -178,6 +214,8 @@ struct CodeResult {
 
 #endif
 
+
+
 // abstraction of the perl value stack
 struct Stack {
   ArgType
@@ -215,6 +253,7 @@ struct Stack {
 
 std::ostream &
 operator <<(std::ostream &out, const PadSv &psv) {
+    dTHX;
   out << "PAD_SV(" << psv.index << ")";
   PADLIST *pl = CvPADLIST(PL_compcv);
   auto names = PadlistNAMES(pl);
@@ -232,6 +271,13 @@ operator <<(std::ostream &out, const LocalSv &lsv) {
   return out;
 }
 
+std::ostream &
+operator <<(std::ostream &out, const LocalNv &lnv) {
+  // we shouldn't be inserting this directly
+  // at least for now
+  assert(0);
+}
+
 #if 0
 std::ostream &
 operator <<(std::ostream &out, const ConstSv &psv) {
@@ -241,7 +287,7 @@ operator <<(std::ostream &out, const ConstSv &psv) {
 #endif
 
 void
-sv_summary(std::ostream &out, SV *sv) {
+sv_summary(pTHX_ std::ostream &out, SV *sv) {
   if (SvGMAGICAL(sv)) {
     out << "GMAGICAL";
   }
@@ -286,6 +332,7 @@ sv_summary(std::ostream &out, SV *sv) {
 
 std::ostream &
 operator <<(std::ostream &out, const OpConst &psv) {
+    dTHX;
 #ifdef USE_ITHREADS
   out << "PAD_SV(((OP*)aux[" << psv.op_index << "].pv)->op_targ)";
 #else
@@ -294,7 +341,7 @@ operator <<(std::ostream &out, const OpConst &psv) {
   /* at compile time it is still an OP_CONST either way */
   SV *sv = cSVOPx_sv(psv.op);
   out << "/* ";
-  sv_summary(out, sv);
+  sv_summary(aTHX_ out, sv);
   out << " */ ";
   return out;
 }
@@ -358,22 +405,37 @@ struct CodeFragment {
     ops.push_back(op);
     return OpConst{index, op};
   }
-  LocalSv
-  make_local_sv() {
-    return LocalSv{local_count++};
-  }
+  // LocalSv
+  // make_local_sv() {
+  //   return LocalSv{local_count++};
+  // }
   LocalSv
   get_local_sv(const PadSv &psv) {
       auto search = pad_locals.find(psv.index);
       if (search == pad_locals.end()) {
-        auto loc = make_local_sv();
-        pad_locals.emplace(psv.index, loc.local_index);
-        *this << "SV *" << loc << " = " << psv << ";\n";
-        return loc;
+          auto loc = LocalSv{local_count++, SourceSv{psv}}
+          pad_locals.emplace(psv.index, loc.local_index);
+          *this << "SV *" << loc << " = " << psv << ";\n";
+          return loc;
       }
       else {
-        return LocalSv{search->second};
+          return LocalSv{search->second, SourceSv{psv}};
       }
+  }
+    LocalSv
+    get_local_sv(const StackSv &ssv) {
+
+    }
+    LocalSv
+    get_local_sv(const LocalSv &lsv) {
+        return lsv;
+    }
+
+  LocalNv
+  make_local_nv(pTHX_ const ArgType &arg, bool init = true) {
+      return std::visit([this, aTHX_ init]( const auto &rarg ) {
+              return make_local_nv_(aTHX_ rarg, init);
+          }, arg);
   }
   // simplify an argument into a LocalSv if it's a PadSv to
   // save PAD_SV() calls
@@ -391,9 +453,12 @@ struct CodeFragment {
   bool overloading;        // is overloading enabled?
   bool use_float;          // prefer floating point
 
-  // hash-in-perl-speak of PadSvs we've made locals for
+  // hash-in-perl-speak of PadSvs we've made local SV*s for
   std::unordered_map<PADOFFSET, int> pad_locals;
-  //CodeResult result;
+
+  // hash-in-perl-speak of PadSvs we've made local NVs for
+  std::unordered_map<PADOFFSET, int> pad_local_nvs;
+
   // code fragment source line extracted from the COP used to
   // generate the function "// file:line" header
   line_t line = 0;
@@ -407,6 +472,48 @@ struct CodeFragment {
   CodeFragment(CodeFragment &&) = delete;
   CodeFragment &operator=(CodeFragment const &) = delete;
   CodeFragment &operator=(CodeFragment &&) = delete;
+
+private:
+  LocalNv
+  make_local_nv_(pTHX_ const PadSv &psv, bool init) {
+      // make sure we have a LocalSv for it
+      auto lsv{get_local_sv(psv)};
+      auto search = pad_local_nvs.find(psv.index);
+      if (search == pad_locals_nvs.end()) {
+          auto loc = LocalNv{local_index++, false, SourceSv{psv}};
+          pad_local_nvs.emplace(psv.index, loc.local_index);
+          if (init)
+              *this << "NV " << loc << " = SvNV(" << psv << ");\n";
+          return loc;
+      }
+      else {
+          return LocalNv{search->second, false, SourceSv(psv}};
+      }
+  }
+  LocalNv
+  make_local_nv_(pTHX_ const OpConst &oc, bool init) {
+      assert(init);
+      // ConstSv is const, we don't modify it
+      auto loc = LocalNv{local_count++, true, SourceSv{NullSv}};
+      *this << "const NV " << loc << " = " << oc << ";\n";
+      return loc;
+  }
+  LocalNv
+  make_local_nv_(pTHX_ const LocalSv &lsv, bool init) {/
+      // FIXME: should check for existing NV for the source
+      auto loc = LocalNv{local_count++, true, lsv.source};
+      if (init)
+          *this << "NV " << loc << " = " << "SvNV(" << lsv << ");\n";
+      return loc;
+  }
+  LocalNv
+  make_local_nv_(pTHX_ const StackSv &ssv, bool init) {
+
+  }
+  LocalNv
+  make_local_nv_(pTHX_ const LocalNv &lnv, bool init) {
+    return lnv;
+  }
 };
 
 // I wanted to make the inserter below check the v was insertable
@@ -576,10 +683,12 @@ ArgType
 binop_float(pTHX_ std::string_view op, CodeFragment &code,
             const ArgType &out, const ArgType &left,
             const ArgType &right) {
-  code << "sv_setnv(" << out << ", SvNV("
-       << left << ") "
-       << op << " SvNV("
-       << right << "));\n";
+  auto nvleft = code.get_local_nv(aTHX_ left);
+  auto nvright = code.get_local_nv(aTHX_ right);
+  auto nvout = code.make_local_nv(aTHX_ out);
+  code << nvout << " = " << nvleft << op << nvright << ";\n";
+  // this will become conditional
+  code << "sv_setnv(" << out << ", " << nvout << ");\n";
   return out;
 }
 
