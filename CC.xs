@@ -11,6 +11,7 @@
 #include <tuple>
 #include <utility>
 #include <unordered_map>
+#include <print>
 
 // lazy for now
 //#define PERL_NO_GET_CONTEXT
@@ -710,12 +711,19 @@ rpeep_for_callcompiled(pTHX_ OP *o, bool init_enabled)
       first = o->op_next;
       count = 0;
       depth = 0;
-      DEBUG_u( PerlIO_printf(PerlIO_stderr(), "nextstate %p file %s line %d enabled %d\n",
-                             o, CopFILE(cCOPo), CopLINE(cCOPo), enabled) );
+      if (DebugFlags(CCDebugFlags::Debug)) {
+	std::println(stderr, "nextstate {} file {} line {} enabled {}",
+		     static_cast<void *>(o), CopFILE(cCOPo),
+		     CopLINE(cCOPo), enabled);
+      }
     }
     if (enabled) {
-      DEBUG_u( PerlIO_printf(PerlIO_stderr(), "scan op %d (%s %p) depth %zu count %d prev %p\n",
-                             o->op_type, OP_NAME(o), (void *)o, depth, count, (void *)oprev) );
+      if (DebugFlags(CCDebugFlags::Debug)) {
+	std::println(stderr, "scan op {} ({} {}) depth {} count {} prev {}",
+		     static_cast<int>(o->op_type), OP_NAME(o),
+		     static_cast<void *>(o),
+		     depth, count, static_cast<void *>(oprev));
+      }
       switch(o->op_type) {
       case OP_CUSTOM:
         if (o->op_ppaddr == pp_callcompiled) {
