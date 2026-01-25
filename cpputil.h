@@ -11,12 +11,12 @@ class BitSet {
   }
   BitSet &
   operator |=(const BitType b) {
-    m_bits |= (unsigned)b;
+    m_bits |= static_cast<unsigned>(b);
     return *this;
   }
   bool
   operator()(BitType bit) const {
-    return (unsigned)m_bits & (unsigned)bit;
+    return m_bits & static_cast<unsigned>(bit);
   }
 };
 
