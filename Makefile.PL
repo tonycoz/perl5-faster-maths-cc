@@ -11,7 +11,7 @@ my %opts =
   (
    NAME => 'Faster::Maths::CC',
    VERSION_FROM => 'lib/Faster/Maths/CC.pm',
-   OBJECT => 'CC$(OBJ_EXT)',
+   OBJECT => 'CC$(OBJ_EXT) docc$(OBJ_EXT)',
    LICENSE => "perl_5",
    AUTHOR => 'Tony Cook <tony@develop-help.com>',
    ABSTRACT => 'Compile perl code fragments to C (eventually)',
@@ -83,6 +83,7 @@ my $guess = ExtUtils::CppGuess->new;
 
 my $std = $guess->cpp_standard_flag("C++23");
 $guess->add_extra_compiler_flags($std);
+$guess->add_extra_compiler_flags("-stdlib=libc++");
 
 WriteMakefile
   (
