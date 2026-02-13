@@ -4,7 +4,7 @@
  *  (C) Paul Evans, 2021 -- leonerd@leonerd.org.uk
  */
 
-#define USE_FLAT_MAP
+//#define USE_FLAT_MAP
 
 #include <vector>
 #include <string>
@@ -891,6 +891,8 @@ register_fragments(pTHX_ const fragment_handler *frags,
 
 }
 
+namespace fmcc {
+
 void
 boot_dmcc(pTHX) {
   init_debug_flags();
@@ -908,4 +910,6 @@ boot_dmcc(pTHX) {
   (void) hv_stores(PL_modglobal, "Faster::Maths::CC::register",
                             newSViv(PTR2IV(register_fragments)));
   // FIXME: hook PL_opfreehook to clean up aux items
+}
+
 }

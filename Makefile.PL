@@ -83,7 +83,7 @@ my $guess = ExtUtils::CppGuess->new;
 
 my $std = $guess->cpp_standard_flag("C++23");
 $guess->add_extra_compiler_flags($std);
-$guess->add_extra_compiler_flags("-stdlib=libc++");
+#$guess->add_extra_compiler_flags("-stdlib=libc++");
 
 WriteMakefile
   (
