@@ -760,6 +760,7 @@ compile_code(pTHX_ CodeFragment &code, OP *start, OP *final, OP *prev)
         {
           auto arg = code.simplify_val(stack.pop());
           auto out = code.simplify_val(PadSv{o->op_targ});
+	  // FIXME: needs to handle overloading, etc
           code << "sv_setnv(" << out << ", -SvNV(" << arg << "));\n";
           if (OP_GIMME(o, OPf_WANT_SCALAR) != OPf_WANT_VOID)
             stack.push(ArgType{out});
