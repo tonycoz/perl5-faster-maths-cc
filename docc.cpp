@@ -1,5 +1,6 @@
 //#define USE_FLAT_MAP
 
+#include <cmath>
 #include <format>
 #include <vector>
 #include <string>
@@ -72,6 +73,29 @@ CCDebugBits DebugFlags;
     return PL_op_seq;
 }
 
+  template <typename ...Args>
+  void log(CCDebugFlags flag,
+	     std::format_string<Args...> fmt,
+	     Args &&... args) {
+    if (DebugFlags(flag)) {
+      std::print(stderr, fmt, std::forward<Args>(args)...);
+    }
+  }
+  template <typename ...Args>
+  void logln(CCDebugFlags flag,
+	       std::format_string<Args...> fmt,
+	       Args &&... args) {
+    if (DebugFlags(flag)) {
+      std::println(stderr, fmt, std::forward<Args>(args)...);
+    }
+  }
+  template <typename ... Args>
+  void debugln(std::format_string<Args...> fmt,
+	       Args &&... args) {
+    if (DebugFlags(CCDebugFlags::Debug)) {
+      std::println(stderr, fmt, std::forward<Args>(args)...);
+    }
+  }
 }
 
 template <>
@@ -532,23 +556,17 @@ pp_callcompiled(pTHX)
   // C code fragment from, so NORMAL will be sane when we don't have
   // compiled code to run yet
   if (fragments == nullptr) {
-    if (DebugFlags(CCDebugFlags::Debug))
-      std::println(stderr, "could not run {} not generated",
-		   OpPtr{PL_op});
+    debugln("could not run {} not generated", OpPtr{PL_op});
     return NORMAL; // use the old
   }
   const UNOP_AUX_item *aux = cUNOP_AUX->op_aux;
   UV index = aux[0].uv;
   if (index >= fragment_count) {
-    if (DebugFlags(CCDebugFlags::Debug))
-      std::println(stderr, "could not run {} high index {}",
-		   OpPtr{PL_op}, index);
+    debugln("could not run {} high index {}", OpPtr{PL_op}, index);
     return NORMAL; // use the old
   }
 
-  if (DebugFlags(CCDebugFlags::TraceFrags)) {
-    std::println(stderr, "calling fragment {}", index);
-  }
+  logln(CCDebugFlags::TraceFrags, "calling fragment {}", index);
   fragments[index](aTHX_ aux);
 
   // skip the old op tree
@@ -599,8 +617,7 @@ code_finalize(pTHX_ CodeFragment &code, Stack &stack, OP *start,
     std::println(stderr, "Skipping OP replacement");
     return;
   }
-  if (DebugFlags(CCDebugFlags::Debug))
-    std::println(stderr, "Performing OP replacement");
+  debugln("Performing OP replacement");
 
   UNOP_AUX_item *aux;
   Newx(aux, 1+code.ops.size(), UNOP_AUX_item);
@@ -632,10 +649,8 @@ code_finalize(pTHX_ CodeFragment &code, Stack &stack, OP *start,
     after = scan2;
     scan2 = OpSIBLING(scan2);
   }
-  if (DebugFlags(CCDebugFlags::Debug)) {
-    std::println(stderr, "insertion parent {} after {} start {} final {}",
-		 OpPtr{parent}, OpPtr{prev}, OpPtr{start}, OpPtr{final});
-  }
+  debugln("insertion parent {} after {} start {} final {}",
+	  OpPtr{parent}, OpPtr{prev}, OpPtr{start}, OpPtr{final});
 
   op_sibling_splice(parent, after, 0, retop);
   if (prev->op_next == start) {
@@ -722,14 +737,10 @@ compile_code(pTHX_ CodeFragment &code, OP *start, OP *final, OP *prev)
   Stack stack;
   OP *oprev = NULL;
   for(OP *o = start; o; o = o->op_next) {
-    if (DebugFlags(CCDebugFlags::TraceOps)) {
-      // avoid error: non-const reference cannot bind to bit-field 'op_type'
-      std::println(stderr, "Compile op: {}", OpPtr(o));
-    }
+    logln(CCDebugFlags::TraceOps, "Compile op: {}", OpPtr(o));
     if (DebugFlags(CCDebugFlags::DumpStack))
       std::cerr << "Stack: " << stack << "\n";
-    if (DebugFlags(CCDebugFlags::TraceOps))
-      std::println("Op: {}", OpPtr{o});
+    logln(CCDebugFlags::TraceOps, "Op: {}", OpPtr{o});
     switch(o->op_type) {
       case OP_CONST:
         stack.push(code.save_const_op(o));
@@ -800,55 +811,42 @@ rpeep_for_callcompiled(pTHX_ OP *o, OP *oprev, bool init_enabled)
   OP *firstprev = oprev;
   //OP *oprev = nullptr;
   const COP *last_cop = PL_curcop;
-  if (DebugFlags(CCDebugFlags::Debug))
-    std::println(stderr, "rpeep enabled {}", enabled);
+  debugln("rpeep enabled {}", enabled);
 
   while(o && o != slowo) {
-    if (DebugFlags(CCDebugFlags::Debug)) {
-      std::println(stderr,
-		   "Outer op {}", OpPtr(o));
-    }
+    debugln("Outer op {}", OpPtr(o));
     if(o->op_type == OP_NEXTSTATE) {
       SV *sv = cop_hints_fetch_pvs(cCOPo, "Faster::Maths::CC/faster", 0);
       enabled = sv && sv != &PL_sv_placeholder && SvTRUE(sv);
       if (first && oprev && count > 1) {
-        if (DebugFlags(CCDebugFlags::Debug)) {
-          std::cerr << "Trace: calling code gen\n";
-        }
+	debugln("Trace: calling code gen");
+
         CodeFragment code{aTHX_ last_cop, o};
         compile_code(aTHX_ code, first, oprev, firstprev);
       }
-      else if (DebugFlags(CCDebugFlags::Debug)) {
-        std::println(stderr,
-		     "Trace: skipped code gen first {} oprev {} count {}",
-		     OpPtr{first}, OpPtr{oprev},
-		     count);
+      else {
+	debugln("Trace: skipped code gen first {} oprev {} count {}",
+		OpPtr{first}, OpPtr{oprev}, count);
       }
       last_cop = reinterpret_cast<const COP *>(o);
       firstprev = o;
       first = nullptr; //o->op_next;
       count = 0;
       depth = 0;
-      if (DebugFlags(CCDebugFlags::Debug)) {
-	std::println(stderr, "nextstate {} file {} line {} enabled {}",
-		     OpPtr(o), CopFILE(cCOPo),
-		     CopLINE(cCOPo), enabled);
-      }
+      debugln("nextstate {} file {} line {} enabled {}",
+	      OpPtr(o), CopFILE(cCOPo), CopLINE(cCOPo), enabled);
     }
     if (enabled) {
       if (!first) {
 	first = o;
 	firstprev = oprev;
       }
-      if (DebugFlags(CCDebugFlags::Debug)) {
-	std::println(stderr, "scan op {} depth {} count {} first {} prev {}",
-		     OpPtr{o}, depth, count, OpPtr{first}, OpPtr{oprev});
-      }
+      debugln("scan op {} depth {} count {} first {} prev {}",
+	      OpPtr{o}, depth, count, OpPtr{first}, OpPtr{oprev});
       switch(o->op_type) {
       case OP_CUSTOM:
         if (o->op_ppaddr == pp_callcompiled) {
-          if (DebugFlags(CCDebugFlags::Debug))
-            std::println(stderr, "Trace: saw our custom op... skipping\n");
+	  debugln("Trace: saw our custom op... skipping\n");
           // we've processed this block
           // make sure we don't do it again
           firstprev = oprev = o;
@@ -877,9 +875,8 @@ rpeep_for_callcompiled(pTHX_ OP *o, OP *oprev, bool init_enabled)
 
       case OP_AND:
 	if (first && oprev && count > 1) {
-	  if (DebugFlags(CCDebugFlags::Debug)) {
-	    std::println(stderr, "Trace: calling code gen (logop)\n");
-	  }
+	  debugln("Trace: calling code gen (logop)");
+
 	  CodeFragment code{aTHX_ last_cop, o};
 	  compile_code(aTHX_ code, first, oprev, firstprev);
 	}
@@ -918,27 +915,24 @@ rpeep_for_callcompiled(pTHX_ OP *o, OP *oprev, bool init_enabled)
         break;
 
       default:
-        if (DebugFlags(CCDebugFlags::Debug))
-          std::println(stderr, "Trace: unrecognized op {}", OpPtr(o));
+	debugln("Trace: unrecognized op {}", OpPtr(o));
         if (first && oprev && count > 1) {
-          if (DebugFlags(CCDebugFlags::Debug)) {
-            std::println(stderr, "Trace: calling code gen");
-          }
+          debugln("Trace: calling code gen");
+
           CodeFragment code {aTHX_ last_cop, o};
           compile_code(aTHX_ code, first, oprev, firstprev);
         }
-        else if (DebugFlags(CCDebugFlags::Debug)) {
-          std::println(stderr,
-		       "Trace: skipped code gen first {} oprev {} count {}",
-		       OpPtr{first}, OpPtr{oprev}, count);
+        else {
+          debugln("Trace: skipped code gen first {} oprev {} count {}",
+		  OpPtr{first}, OpPtr{oprev}, count);
         }
         first = nullptr;
         count = 0;
         break;
       }
     }
-    else if (DebugFlags(CCDebugFlags::Debug)) {
-      std::println(stderr, "Skip {}", OpPtr(o));
+    else {
+      debugln("Skip {}", OpPtr(o));
       first = nullptr;
     }
     if (!slowo)
