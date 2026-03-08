@@ -7,7 +7,7 @@
 #include <sstream>
 #include <iostream>
 #include <utility>
-#ifdef USE_FLAT_MAP
+#if __has_include(<flat_map>)
 #include <flat_map>
 template <class Key, class Value>
   using my_map = std::flat_map<Key, Value>;
