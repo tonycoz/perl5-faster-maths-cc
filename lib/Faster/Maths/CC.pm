@@ -33,7 +33,8 @@ sub import {
 
 sub unimport {
    $^H{"Faster::Maths::CC/faster"} = 0;
- }
+   $^H{"Faster::Maths::CC/float"} = 0;
+}
 
 my sub DebugFlags {
   my $key = shift;
@@ -254,6 +255,11 @@ Faster::Maths::CC.
 
 =item C<n> - generate the C code and build it, but don't insert the
 OPs.
+
+=item C<u> - dUmp the op tree before processing
+
+=item C<S> - include the op sequence number (as with -Dx) when
+reporting OP addresses.  This is not thread safe.
 
 =back
 
