@@ -5,6 +5,12 @@ use warnings;
 
 use Test::More;
 
+our $can_faster_maths;
+
+BEGIN {
+    $can_faster_maths = eval { require Faster::Maths; 1 };
+}
+
 # This "test" never fails, but prints a benchmark comparison between two
 # mathematically-identical functions, one with Faster::Maths and one without
 
@@ -29,7 +35,7 @@ sub julia_standard
    my ($cr, $ci) = @$C;
 
    my $count = $MAXCOUNT;
-   while( $count and $zr*$zr + $zi*$zi < 2*2 ) {
+   while ( $count and $zr*$zr + $zi*$zi < 2*2 ) {
       ($zr, $zi) = ( ($zr*$zr - $zi*$zi + $cr), 2*($zr*$zi) + $ci );
       --$count or return undef;
    }
@@ -45,7 +51,7 @@ sub julia_faster
    my ($cr, $ci) = @$C;
 
    my $count = $MAXCOUNT;
-   while( $count and $zr*$zr + $zi*$zi < 2*2 ) {
+   while ( $count and $zr*$zr + $zi*$zi < 2*2 ) {
       ($zr, $zi) = ( ($zr*$zr - $zi*$zi + $cr), 2*($zr*$zi) + $ci );
       --$count or return undef;
    }
@@ -62,7 +68,7 @@ sub julia_noov
    my ($cr, $ci) = @$C;
 
    my $count = $MAXCOUNT;
-   while( $count and $zr*$zr + $zi*$zi < 2*2 ) {
+   while ( $count and $zr*$zr + $zi*$zi < 2*2 ) {
       ($zr, $zi) = ( ($zr*$zr - $zi*$zi + $cr), 2*($zr*$zi) + $ci );
       --$count or return undef;
    }
@@ -79,7 +85,23 @@ sub julia_float
    my ($cr, $ci) = @$C;
 
    my $count = $MAXCOUNT;
-   while( $count and $zr*$zr + $zi*$zi < 2*2 ) {
+   while ( $count and $zr*$zr + $zi*$zi < 2*2 ) {
+      ($zr, $zi) = ( ($zr*$zr - $zi*$zi + $cr), 2*($zr*$zi) + $ci );
+      --$count or return undef;
+   }
+
+   return $count;
+}
+
+sub julia_fm
+{
+   use if $can_faster_maths => "Faster::Maths";
+
+   my ($zr, $zi) = @_;
+   my ($cr, $ci) = @$C;
+
+   my $count = $MAXCOUNT;
+   while ( $count and $zr*$zr + $zi*$zi < 2*2 ) {
       ($zr, $zi) = ( ($zr*$zr - $zi*$zi + $cr), 2*($zr*$zi) + $ci );
       --$count or return undef;
    }
@@ -91,6 +113,7 @@ my $standard_elapsed = 0;
 my $faster_elapsed   = 0;
 my $noov_elapsed     = 0;
 my $float_elapsed    = 0;
+my $fm_elapsed       = 0;
 
 # To reduce the influence of bursts of timing noise, interleave many small runs
 # of each type.
@@ -111,13 +134,18 @@ foreach ( 1 .. 20 ) {
    $noov_elapsed += measure {
       my $ret;
       $ret = julia_noov( @$Z0 ) for 1 .. $COUNT;
-      $ret == $ESCAPE_VAL or die "Expected $ESCAPE_VAL from faster got $ret\n";
+      $ret == $ESCAPE_VAL or die "Expected $ESCAPE_VAL from noov got $ret\n";
    };
    $float_elapsed += measure {
       my $ret;
       $ret = julia_float( @$Z0 ) for 1 .. $COUNT;
-      $ret == $ESCAPE_VAL or die "Expected $ESCAPE_VAL from faster got $ret\n";
+      $ret == $ESCAPE_VAL or die "Expected $ESCAPE_VAL from float got $ret\n";
    };
+   $fm_elapsed += measure {
+      my $ret;
+      $ret = julia_fm( @$Z0 ) for 1 .. $COUNT;
+      $ret == $ESCAPE_VAL or die "Expected $ESCAPE_VAL from fm got $ret\n";
+   } if $can_faster_maths;
 }
 
 pass( "Benchmarked" );
@@ -139,6 +167,7 @@ sub summary {
 summary("faster", $faster_elapsed);
 summary("no overload", $noov_elapsed);
 summary("float", $float_elapsed);
+summary("fm", $fm_elapsed) if $can_faster_maths;
 
 ok(@Faster::Maths::CC::collection, "we compiled something");
 
