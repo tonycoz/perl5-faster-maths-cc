@@ -107,9 +107,10 @@ struct std::formatter<OpPtr> {
   constexpr auto format(const OpPtr &p, std::format_context &ctx) const {
     auto it = std::format_to(ctx.out(), "{}", static_cast<const void *>(p.o));
     if (p.o) {
+      dTHX;
+      // don't try to bind to a bitfield
       int type = p.o->op_type;
       if (DebugFlags(CCDebugFlags::OpSeq)) {
-	dTHX;
 	it = std::format_to(it, " (#{} {} {})",
 			    my_op_sequence_num(aTHX_ p.o),
 			    type, OP_NAME(p.o));
