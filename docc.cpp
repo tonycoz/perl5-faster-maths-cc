@@ -345,42 +345,42 @@ sv_summary(pTHX_ std::ostream &out, SV *sv) {
   if (SvGMAGICAL(sv)) {
     out << "GMAGICAL";
   }
-  else if (!SvOK(sv)) {
-    out << "undef";
-  }
-  else if (SvIOK(sv)) {
-    out << SvIVX(sv);
-  }
-  else if (SvNOK(sv)) {
-    out << SvNVX(sv);
-  }
-  else if (SvPOK(sv)) {
-    out << '"';
-    STRLEN len;
-    const char *pv = SvPV(sv, len);
-    bool dots = false;
-    if (len > 13) {
-      len = 10;
-      dots = true;
-    }
-    const char *end = pv+len;
-    for (; pv < end; ++pv) {
-      if (*pv >= ' ' && *pv <= '~' && *pv != '/') {
-        out << *pv;
-      }
-      else {
-        dots = true;
-        break;
-      }
-    }
-    if (dots) out << "...";
-    out << '"';
-  }
-  else if (SvROK(sv)) {
-    out << "REF";
+  if (!SvOK(sv)) {
+    out << "undef ";
   }
   else {
-    out << "something...";
+    if (SvIOK(sv)) {
+      out << "IV " << SvIVX(sv) << ' ';
+    }
+    if (SvNOK(sv)) {
+      out << "NV " << SvNVX(sv) << ' ';
+    }
+    if (SvPOK(sv)) {
+      out << "PV \"";
+      STRLEN len;
+      const char *pv = SvPV(sv, len);
+      bool dots = false;
+      if (len > 13) {
+	len = 10;
+	dots = true;
+      }
+      const char *end = pv+len;
+      for (; pv < end; ++pv) {
+	if (*pv >= ' ' && *pv <= '~' && *pv != '/') {
+	  out << *pv;
+	}
+	else {
+	  dots = true;
+	  break;
+	}
+      }
+      if (dots) out << "...";
+      out << "\" ";
+    }
+    if (SvROK(sv)) {
+      out << "REF ";
+      sv_summary(aTHX_ out, SvRV(sv));
+    }
   }
 }
 
@@ -396,7 +396,7 @@ operator <<(std::ostream &out, const OpConst &psv) {
   SV *sv = cSVOPx_sv(psv.op);
   out << "/* ";
   sv_summary(aTHX_ out, sv);
-  out << " */ ";
+  out << "*/ ";
   return out;
 }
 
