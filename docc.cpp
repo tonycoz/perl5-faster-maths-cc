@@ -55,6 +55,8 @@ using CCDebugBits = BitSet<CCDebugFlags>;
 CCDebugBits DebugFlags;
 
   // adapted from perl dump.c S_sequence_num
+  // used to report sequence numbers for OPs that match those
+  // reported by op_dump().
   UV
   my_op_sequence_num(pTHX_ const OP *o)
   {
