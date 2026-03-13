@@ -995,7 +995,7 @@ register_fragments(pTHX_ const fragment_handler *frags, size_t frag_count) {
 namespace fmcc {
 
 void
-boot_dmcc(pTHX) {
+boot(pTHX) {
     init_debug_flags();
     next_rpeepp = PL_rpeepp;
     PL_rpeepp = &my_rpeepp;

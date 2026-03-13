@@ -16,4 +16,4 @@ MODULE = Faster::Maths::CC    PACKAGE = Faster::Maths::CC
 PROTOTYPES: DISABLE
 
 BOOT:
-  fmcc::boot_dmcc(aTHX);
+  fmcc::boot(aTHX);
