@@ -94,7 +94,7 @@ sub f_dual {
   $f_dual = $x * $y * $y + dual_const;
 }
 
-code_like(qr/\$f_dualx/, qr(/\* NV 23.1 PV "abc" \*/), "sv_summary dual");
+code_like(qr/\$f_dual/, qr(/\* NV 23.1 PV "abc" \*/), "sv_summary dual");
 
 done_testing();
 
