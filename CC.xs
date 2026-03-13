@@ -2,6 +2,7 @@
  *  or the Artistic License (the same terms as Perl itself)
  *
  *  (C) Paul Evans, 2021 -- leonerd@leonerd.org.uk
+ *  (C) Tony Cook 2025 -- massively mangled
  */
 
 

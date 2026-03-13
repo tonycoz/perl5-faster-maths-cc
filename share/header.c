@@ -66,7 +66,7 @@ my_try_amagic_bin(pTHX_ SV *out, SV **left, SV **right, int method, int flags,
     /* eventually this will happen during code gen */
     if (UNLIKELY(PL_hints & HINT_NO_AMAGIC))
         return NULL;
-    return (UNLIKELY((SvFLAGS(*left) | SvFLAGS(*right)) & SVf_ROK))
+    return UNLIKELY((SvFLAGS(*left) | SvFLAGS(*right)) & (SVf_ROK|SVs_GMG))
       ? do_try_amagic_bin(aTHX_ out, left, right, method, flags, mutator) : NULL;
 }
 
@@ -75,7 +75,7 @@ do_try_amagic_un(pTHX_ SV **psv, int method, int flags) {
     if (SvAMAGIC(*psv)) {
         OP *saved = PL_op; /* to get scalar context /cry */
         PL_op = NULL;
-        SV *result = amagic_call(*psv, NULL, method,
+        SV *result = amagic_call(*psv, &PL_sv_undef, method,
                                  flags | AMGf_unary | AMGf_noright);
         PL_op = saved;
         if (result)
@@ -93,7 +93,7 @@ my_try_amagic_un(pTHX_ SV **psv, int method, int flags) {
     /* eventually this will happen during code gen */
     if (UNLIKELY(PL_hints & HINT_NO_AMAGIC))
         return NULL;
-    return (UNLIKELY(((SvFLAGS(*psv)) & SVf_ROK)) == SVf_ROK)
+    return UNLIKELY((SvFLAGS(*psv)) & (SVf_ROK|SVs_GMG))
       ? do_try_amagic_un(aTHX_ psv, method, flags) : NULL;
 }
 

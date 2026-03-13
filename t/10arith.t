@@ -43,6 +43,7 @@ my $min_uvp1 = $min_uv + 1;
 my $max_uvp1 = $max_uv + 1;
 my $min_iv = -$max_iv - 1;
 my $mmax_iv = - $max_iv;
+my $mmax_uv = - $max_uv; # no longer IV/UV
 my $three = 3;
 my $mthree = -3;
 my $five = 5;
@@ -271,7 +272,11 @@ tryeq $T++,  $min_uv / -1 + 0, -$min_uv, '(IV_MAX+1) / -1';
 
 # tryeq $T++,  0x3ffffffe % -0xc0000000, -0x80000002, 'modulo is (IV_MIN-2)';
 # tryeq $T++,  0x3fffffff % -0xc0000000, -0x80000001, 'modulo is (IV_MIN-1)';
-# tryeq $T++,  0x40000000 % -0xc0000000, -0x80000000, 'modulo is IV_MIN';
+  # tryeq $T++,  0x40000000 % -0xc0000000, -0x80000000, 'modulo is IV_MIN';
+
+  # negation
+  tryeq $T++, -$max_iv + 0 + 0, $mmax_iv, "-IV_MAX";
+  tryeq $T++, -$max_uv + 0 + 0, $mmax_uv, "-UV_MAX";
 }
 
 print "1..", $T-1, "\n";

@@ -745,6 +745,47 @@ add_binop(pTHX_ OP *o, CodeFragment &code, Stack &stack,
         stack.push(std::move(result));
 }
 
+ArgType
+unop_normal(pTHX_ OP *o, std::string_view opname, CodeFragment &code,
+            const ArgType &out, const ArgType &arg) {
+    // the result might be in out, or it might be in a mortal
+    // so just some SV
+    ArgType result = code.make_local_sv();
+    code << "SV *" << result << " = " << opname << "(aTHX_ " << out << ", "
+         << arg << ");\n";
+
+    return result;
+}
+
+ArgType
+unop_noov(pTHX_ std::string_view opname, CodeFragment &code, const ArgType &out,
+          const ArgType &arg) {
+    code << opname << "_noov" << "(aTHX_ " << out << ", " << arg << ");\n";
+    return out;
+}
+
+ArgType
+unop_float(pTHX_ std::string_view op, CodeFragment &code, const ArgType &out,
+           const ArgType &arg) {
+    code << "sv_setnv(" << out << ", " << op << "SvNV(" << arg << "));\n";
+    return out;
+}
+
+void
+add_unop(pTHX_ OP *o, CodeFragment &code, Stack &stack, std::string_view opname,
+         std::string_view op) {
+    auto arg = code.simplify_val(stack.pop());
+    auto out = code.simplify_val(PadSv{o->op_targ});
+    ArgType result = code.overloading
+                         ? unop_normal(aTHX_ o, opname, code, out, arg)
+                     : code.use_float ? unop_float(aTHX_ op, code, out, arg)
+                                      : unop_noov(aTHX_ opname, code, out, arg);
+
+    // only push a result if non-void
+    if (OP_GIMME(o, OPf_WANT_SCALAR) != OPf_WANT_VOID)
+        stack.push(std::move(result));
+}
+
 void
 compile_code(pTHX_ CodeFragment &code, OP *start, OP *final, OP *prev) {
     Stack stack;
@@ -780,14 +821,9 @@ compile_code(pTHX_ CodeFragment &code, OP *start, OP *final, OP *prev) {
             add_binop(aTHX_ o, code, stack, "do_divide", "/");
             break;
 
-        case OP_NEGATE: {
-            auto arg = code.simplify_val(stack.pop());
-            auto out = code.simplify_val(PadSv{o->op_targ});
-            // FIXME: needs to handle overloading, etc
-            code << "sv_setnv(" << out << ", -SvNV(" << arg << "));\n";
-            if (OP_GIMME(o, OPf_WANT_SCALAR) != OPf_WANT_VOID)
-                stack.push(ArgType{out});
-        } break;
+        case OP_NEGATE:
+            add_unop(aTHX_ o, code, stack, "do_negate", "-");
+            break;
 
         default:
             croak("ARGH unsure how to optimize this op\n");
@@ -1002,7 +1038,7 @@ boot(pTHX) {
 
     XopENTRY_set(&xop_callcompiled, xop_name, "callcompiled");
     XopENTRY_set(&xop_callcompiled, xop_desc,
-                 "call into C compiled code generated from the OP tree");
+                 "call Faster::Maths::CC generated code");
     XopENTRY_set(&xop_callcompiled, xop_class, OA_UNOP_AUX);
 #ifdef XOPf_xop_dump
     XopENTRY_set(&xop_callcompiled, xop_dump, my_xop_dump);
