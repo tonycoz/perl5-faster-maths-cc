@@ -12,8 +12,10 @@ my @formatters =
   "clang-format"
   );
 
+my $skip = 1;
 if ($ENV{CLANG_FORMAT}) {
     @formatters = split /\Q$Config{path_sep}/, $ENV{CLANG_FORMAT};
+    $skip = 0;
 }
 
 # look for the formatter
@@ -31,10 +33,13 @@ for my $candidate (@formatters) {
   }
 }
 skip_all "No formatter"
-  unless $out;
+    if !$out && $skip;
+
+die "No formatter out of @formatters found"
+    unless $out;
 
 open my $srcfh, "<", "docc.cpp"
-  or skip_all "Cannot open docc.cpp: $!";
+    or skip_all "Cannot open docc.cpp: $!";
 my $src = do { local $/; <$srcfh> };
 $src =~ tr/\r//d;
 
@@ -50,11 +55,11 @@ unless (ok($src eq $out, "docc.cpp properly formatted")) {
         if ($src_line ne $exp_line) {
             diag <<EOS;
 First mismatch:
-  Line: $lineno
-  Source: $src_line
-  Expect: $exp_line
+Line: $lineno
+Source: $src_line
+Expect: $exp_line
 EOS
-            last;
+             last;
         }
         ++$lineno;
     }
