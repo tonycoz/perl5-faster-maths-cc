@@ -1,0 +1,52 @@
+name: test-linux
+
+on:
+  push:
+    branches:
+      - '**'
+    tags-ignore:
+      - '*'
+  pull_request:
+
+
+jobs:
+  faster-maths-cc:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: add llvm apt repo
+        run: |
+            wget https://apt.llvm.org/llvm.sh
+            chmod +x llvm.sh
+            sudo ./llvm.sh 21
+            sudo apt install clang-format-21
+      - name: install dependencies
+        run: |
+            sudo apt-get update ||:
+            sudo apt-get -y install build-essential clang-format clang
+      - name: checkout
+        uses: actions/checkout@v2
+      - name: Set up perl
+        uses: shogo82148/actions-setup-perl@v1.37.1
+        with:
+          perl-version: latest
+          multi-thread: true
+          install-modules:
+            ExtUtils::CppGuess
+            Faster::Maths
+            File::ShareDir
+            File::ShareDir::Install
+            Test::Pod
+      - name: perl -V
+        run: perl -V
+      - name: clang version
+        run: clang-21 --version
+      - name: configure
+        run: |
+            CXX='clang-21 -xc++' perl Makefile.PL
+      - name: build
+        run: |
+            make -j2
+      - name: test
+        run: |
+            CLANG_FORMAT=clang-format-21 HARNESS_OPTIONS=j2 AUTHOR_TESTING=tonyc make test
