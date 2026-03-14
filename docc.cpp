@@ -711,6 +711,24 @@ binop_normal(pTHX_ OP *o, std::string_view opname, CodeFragment &code,
 }
 
 ArgType
+binop_ovfloat(pTHX_ OP *o, std::string_view opname, CodeFragment &code,
+              const ArgType &out, const ArgType &left, const ArgType &right) {
+    bool mutator =
+        (PL_opargs[o->op_type] & OA_TARGLEX) && (o->op_private & OPpTARGET_MY);
+    // the result might be left, out, or it might be in a mortal
+    // so just some SV
+    ArgType result = code.make_local_sv();
+    code << "SV *" << result << " = " << opname << "_ovfloat(aTHX_ " << out
+         << ", " << left << ", " << right << ",\n    0";
+    if (o->op_flags & OPf_STACKED) {
+        code << " | AMGf_assign";
+    }
+    code << ", " << mutator << ");\n";
+
+    return result;
+}
+
+ArgType
 binop_noov(pTHX_ std::string_view opname, CodeFragment &code,
            const ArgType &out, const ArgType &left, const ArgType &right) {
     code << opname << "_noov" << "(aTHX_ " << out << ", " << left << ", "
@@ -721,8 +739,8 @@ binop_noov(pTHX_ std::string_view opname, CodeFragment &code,
 ArgType
 binop_float(pTHX_ std::string_view op, CodeFragment &code, const ArgType &out,
             const ArgType &left, const ArgType &right) {
-    code << "sv_setnv(" << out << ", SvNV(" << left << ") " << op << " SvNV("
-         << right << "));\n";
+    code << "fast_sv_setnv(aTHX_ " << out << ", SvNV(" << left << ") " << op
+         << " SvNV(" << right << "));\n";
     return out;
 }
 
@@ -736,13 +754,29 @@ add_binop(pTHX_ OP *o, CodeFragment &code, Stack &stack,
         o->op_flags & OPf_STACKED ? left : code.simplify_val(PadSv{o->op_targ});
 
     ArgType result =
-        code.overloading ? binop_normal(aTHX_ o, opname, code, out, left, right)
-        : code.use_float ? binop_float(aTHX_ op, code, out, left, right)
-                         : binop_noov(aTHX_ opname, code, out, left, right);
+        code.overloading
+            ? (code.use_float
+                   ? binop_ovfloat(aTHX_ o, opname, code, out, left, right)
+                   : binop_normal(aTHX_ o, opname, code, out, left, right))
+            : (code.use_float
+                   ? binop_float(aTHX_ op, code, out, left, right)
+                   : binop_noov(aTHX_ opname, code, out, left, right));
 
     // only push a result if non-void
     if (OP_GIMME(o, OPf_WANT_SCALAR) != OPf_WANT_VOID)
         stack.push(std::move(result));
+}
+
+ArgType
+unop_ovfloat(pTHX_ OP *o, std::string_view opname, CodeFragment &code,
+             const ArgType &out, const ArgType &arg) {
+    // the result might be in out, or it might be in a mortal
+    // so just some SV
+    ArgType result = code.make_local_sv();
+    code << "SV *" << result << " = " << opname << "_ovfloat(aTHX_ " << out
+         << ", " << arg << ");\n";
+
+    return result;
 }
 
 ArgType
@@ -767,7 +801,8 @@ unop_noov(pTHX_ std::string_view opname, CodeFragment &code, const ArgType &out,
 ArgType
 unop_float(pTHX_ std::string_view op, CodeFragment &code, const ArgType &out,
            const ArgType &arg) {
-    code << "sv_setnv(" << out << ", " << op << "SvNV(" << arg << "));\n";
+    code << "fast_sv_setnv(aTHX_ " << out << ", " << op << "SvNV(" << arg
+         << "));\n";
     return out;
 }
 
@@ -776,10 +811,12 @@ add_unop(pTHX_ OP *o, CodeFragment &code, Stack &stack, std::string_view opname,
          std::string_view op) {
     auto arg = code.simplify_val(stack.pop());
     auto out = code.simplify_val(PadSv{o->op_targ});
-    ArgType result = code.overloading
-                         ? unop_normal(aTHX_ o, opname, code, out, arg)
-                     : code.use_float ? unop_float(aTHX_ op, code, out, arg)
-                                      : unop_noov(aTHX_ opname, code, out, arg);
+    ArgType result =
+        code.overloading
+            ? (code.use_float ? unop_ovfloat(aTHX_ o, opname, code, out, arg)
+                              : unop_normal(aTHX_ o, opname, code, out, arg))
+            : (code.use_float ? unop_float(aTHX_ op, code, out, arg)
+                              : unop_noov(aTHX_ opname, code, out, arg));
 
     // only push a result if non-void
     if (OP_GIMME(o, OPf_WANT_SCALAR) != OPf_WANT_VOID)

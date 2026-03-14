@@ -1,3 +1,4 @@
+#line 1 "header.c"
 /* generated code */
 #define PERL_NO_GET_CONTEXT
 
@@ -481,6 +482,22 @@ do_add_noov(pTHX_ SV *out, SV *svl, SV *svr) {
     do_add_raw(aTHX_ out, svl, svr);
 }
 
+static inline SV *
+do_add_ovfloat(pTHX_ SV *out, SV *left, SV *right,
+               int amagic_flags, bool mutator) {
+    SvGETMAGIC(left);
+    if (left != right)
+        SvGETMAGIC(right);
+    SV *result = my_try_amagic_bin(aTHX_ out, &left, &right, add_amg,
+                                   amagic_flags | AMGf_numeric, mutator);
+    if (result)
+        return result;
+
+    fast_sv_setnv(aTHX_ out, SvNV(left) + SvNV(right));
+
+    return out;
+}
+
 static void
 do_subtract_raw(pTHX_ SV *out, SV *svl, SV *svr) {
     NV nv;
@@ -654,6 +671,22 @@ do_subtract_noov(pTHX_ SV *out, SV *svl, SV *svr) {
     do_subtract_raw(aTHX_ out, svl, svr);
 }
 
+static inline SV *
+do_subtract_ovfloat(pTHX_ SV *out, SV *left, SV *right,
+               int amagic_flags, bool mutator) {
+    SvGETMAGIC(left);
+    if (left != right)
+        SvGETMAGIC(right);
+    SV *result = my_try_amagic_bin(aTHX_ out, &left, &right, subtr_amg,
+                                   amagic_flags | AMGf_numeric, mutator);
+    if (result)
+        return result;
+
+    fast_sv_setnv(aTHX_ out, SvNV(left) - SvNV(right));
+
+    return out;
+}
+
 static void
 do_multiply_raw(pTHX_ SV *out, SV *svl, SV *svr) {
 #ifdef PERL_PRESERVE_IVUV
@@ -782,6 +815,22 @@ do_multiply_noov(pTHX_ SV *out, SV *svl, SV *svr) {
     svl = my_sv_2num_noov(aTHX_ svl);
     svr = my_sv_2num_noov(aTHX_ svr);
     do_multiply_raw(aTHX_ out, svl, svr);
+}
+
+static inline SV *
+do_multiply_ovfloat(pTHX_ SV *out, SV *left, SV *right,
+                    int amagic_flags, bool mutator) {
+    SvGETMAGIC(left);
+    if (left != right)
+        SvGETMAGIC(right);
+    SV *result = my_try_amagic_bin(aTHX_ out, &left, &right, mult_amg,
+                                   amagic_flags | AMGf_numeric, mutator);
+    if (result)
+        return result;
+
+    fast_sv_setnv(aTHX_ out, SvNV(left) * SvNV(right));
+
+    return out;
 }
 
 static void
@@ -920,6 +969,22 @@ do_divide_noov(pTHX_ SV *out, SV *svl, SV *svr) {
     do_divide_raw(aTHX_ out, svl, svr);
 }
 
+static inline SV *
+do_divide_ovfloat(pTHX_ SV *out, SV *left, SV *right,
+                  int amagic_flags, bool mutator) {
+    SvGETMAGIC(left);
+    if (left != right)
+        SvGETMAGIC(right);
+    SV *result = my_try_amagic_bin(aTHX_ out, &left, &right, div_amg,
+                                   amagic_flags | AMGf_numeric, mutator);
+    if (result)
+        return result;
+
+    fast_sv_setnv(aTHX_ out, SvNV(left) / SvNV(right));
+
+    return out;
+}
+
 static bool
 my_negate_string(pTHX_ SV *out, SV *sv) {
     /* based on S_negate_string() in pp.c */
@@ -1002,6 +1067,17 @@ do_negate(pTHX_ SV *out, SV *sv) {
     return result;
 
   do_negate_low(aTHX_ out, sv);
+  return out;
+}
+
+static inline SV *
+do_negate_ovfloat(pTHX_ SV *out, SV *sv) {
+  SvGETMAGIC(sv);
+  SV *result = my_try_amagic_un(aTHX_ &sv, neg_amg, AMGf_numeric);
+  if (result)
+    return result;
+
+  fast_sv_setnv(aTHX_ out, -SvNV(sv));
   return out;
 }
 

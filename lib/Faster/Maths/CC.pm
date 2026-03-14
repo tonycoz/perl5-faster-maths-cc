@@ -237,12 +237,14 @@ performance improvements like:
 
   Improvement   Configuration
   -----------   -------------
-  20%           Faster::Maths::CC
-  21%           Faster::Maths::CC, no overloading
-  35%           Faster::Maths::CC +float, no overloading
+  17%           Faster::Maths::CC
+  35%           Faster::Maths::CC +float
+  20%           Faster::Maths::CC, no overloading
+  43%           Faster::Maths::CC +float, no overloading
   27%           original Faster::Maths
 
-All relative to native perl performance.
+All relative to native perl performance on a specific CPU, and there's
+some random variation.
 
 =head2 HOW IT WORKS
 
@@ -273,10 +275,6 @@ generated code is created, compiled and loaded.
 =item *
 
 OPs supported are very limited
-
-=item *
-
-doesn't handle C<+float> with overloading enabled
 
 =item *
 

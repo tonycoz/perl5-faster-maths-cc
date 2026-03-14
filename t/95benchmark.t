@@ -76,7 +76,23 @@ sub julia_noov
    return $count;
 }
 
-sub julia_float
+sub julia_ovfloat
+{
+   use Faster::Maths::CC "+float";
+
+   my ($zr, $zi) = @_;
+   my ($cr, $ci) = @$C;
+
+   my $count = $MAXCOUNT;
+   while ( $count and $zr*$zr + $zi*$zi < 2*2 ) {
+      ($zr, $zi) = ( ($zr*$zr - $zi*$zi + $cr), 2*($zr*$zi) + $ci );
+      --$count or return undef;
+   }
+
+   return $count;
+}
+
+sub julia_noovfloat
 {
    use Faster::Maths::CC "+float";
    no overloading;
@@ -112,7 +128,8 @@ sub julia_fm
 my $standard_elapsed = 0;
 my $faster_elapsed   = 0;
 my $noov_elapsed     = 0;
-my $float_elapsed    = 0;
+my $ovfloat_elapsed  = 0;
+my $noovfloat_elapsed = 0;
 my $fm_elapsed       = 0;
 
 # To reduce the influence of bursts of timing noise, interleave many small runs
@@ -131,15 +148,20 @@ foreach ( 1 .. 20 ) {
       $ret = julia_faster( @$Z0 ) for 1 .. $COUNT;
       $ret == $ESCAPE_VAL or die "Expected $ESCAPE_VAL from faster got $ret\n";
    };
+   $ovfloat_elapsed += measure {
+      my $ret;
+      $ret = julia_ovfloat( @$Z0 ) for 1 .. $COUNT;
+      $ret == $ESCAPE_VAL or die "Expected $ESCAPE_VAL from ovfloat got $ret\n";
+   };
    $noov_elapsed += measure {
       my $ret;
       $ret = julia_noov( @$Z0 ) for 1 .. $COUNT;
       $ret == $ESCAPE_VAL or die "Expected $ESCAPE_VAL from noov got $ret\n";
    };
-   $float_elapsed += measure {
+   $noovfloat_elapsed += measure {
       my $ret;
-      $ret = julia_float( @$Z0 ) for 1 .. $COUNT;
-      $ret == $ESCAPE_VAL or die "Expected $ESCAPE_VAL from float got $ret\n";
+      $ret = julia_noovfloat( @$Z0 ) for 1 .. $COUNT;
+      $ret == $ESCAPE_VAL or die "Expected $ESCAPE_VAL from noovfloat got $ret\n";
    };
    $fm_elapsed += measure {
       my $ret;
@@ -165,8 +187,9 @@ sub summary {
 }
 
 summary("faster", $faster_elapsed);
+summary("ovfloat", $ovfloat_elapsed);
 summary("no overload", $noov_elapsed);
-summary("float", $float_elapsed);
+summary("noovfloat", $noovfloat_elapsed);
 summary("fm", $fm_elapsed) if $can_faster_maths;
 
 ok(@Faster::Maths::CC::collection, "we compiled something");

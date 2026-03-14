@@ -22,6 +22,17 @@
 # dists and distdirs
 ^Faster-Maths-CC-[0-9]
 
+# tool droppings
+^\.cache/
+^compile_commands\.json$
+
+# I haven't used vscode here... but something uses the name
+^\.vscode/
+
+# eclipse
+^\.c?project$
+^\.settings/
+
 # perf record
 ^perf\.data
 

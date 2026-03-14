@@ -1,6 +1,9 @@
+.clang-format
 CC.xs
 Changes
 cpputil.h
+docc.cpp
+docc.h
 extport.h
 lib/Faster/Maths/CC.pm
 LICENSE
@@ -17,4 +20,5 @@ t/20maths.t
 t/30overload.t
 t/40code.t
 t/95benchmark.t
+t/98format.t
 t/99pod.t

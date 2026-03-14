@@ -28,6 +28,30 @@ use Math::BigFloat;
   is( $two * ( $four + $one ), "(2 * (4 + 1))", '2*(4+1) is 10' );
   is( - ($one + $two + $four), '(- ((1 + 2) + 4))', '-(1+2+4) is -7' );
 }
+
+{
+  my $one  = Bodmas->new(1);
+  my $two  = Bodmas->new(2);
+  my $four = Bodmas->new(4);
+
+  use Faster::Maths::CC "+float";
+  # test overloading handled correctly with +float
+
+  my $r = $one + $two + $four;
+  is($r, "((1 + 2) + 4)", '1+2+4 is 7' );
+  isa_ok($r, "Bodmas");
+
+  $r = $four - $two - $one;
+  is($r, "((4 - 2) - 1)", '4-2-1 is 1' );
+  isa_ok($r, "Bodmas");
+
+  is( $one * $four * $two, "((1 * 4) * 2)", '1*4*2 is 8' );
+
+  is( $two * $four + $one, "((2 * 4) + 1)", '2*4+1 is 9' );
+  is( $two * ( $four + $one ), "(2 * (4 + 1))", '2*(4+1) is 10' );
+  is( - ($one + $two + $four), '(- ((1 + 2) + 4))', '-(1+2+4) is -7' );
+}
+
 {
   my $one  = Math::BigFloat->new(1);
   my $two  = Math::BigFloat->new(2);
@@ -35,6 +59,29 @@ use Math::BigFloat;
 
   use Faster::Maths::CC;
   # test overloading handled correctly
+  # Use some lexicals to avoid constfolding
+  my $r = $one + $two + $four;
+  is($r, 7, '1+2+4 is 7' );
+  isa_ok($r, "Math::BigFloat");
+
+  my $r2 = $four - $two - $one;
+  is($r2, 1, '4-2-1 is 1' );
+  isa_ok($r, "Math::BigFloat");
+
+  is( $one * $four * $two, 8, '1*4*2 is 8' );
+
+  is( $two * $four + $one, 9, '2*4+1 is 9' );
+  is( $two * ( $four + $one ), 10, '2*(4+1) is 10' );
+  is( - ($one + $two + $four), -7, '-(1+2+4) is -7' );
+}
+
+{
+  my $one  = Math::BigFloat->new(1);
+  my $two  = Math::BigFloat->new(2);
+  my $four = Math::BigFloat->new(4);
+
+  use Faster::Maths::CC "+float";
+  # test overloading handled correctly with +float
   # Use some lexicals to avoid constfolding
   my $r = $one + $two + $four;
   is($r, 7, '1+2+4 is 7' );
