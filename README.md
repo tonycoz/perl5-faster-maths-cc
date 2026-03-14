@@ -77,7 +77,10 @@ Some thoughts:
   complicate other code transformations)
 - caching, yay
 
-Code from `t/95benchmark.t`, generated from the perl code;
+# Generated code
+
+Code from `t/95benchmark.t`, generated from the julia() function
+above.
 
 with `use Faster::Maths::CC;`, `use Faster::Maths::CC "+float";`
 combined with `no overloading;` or not.
