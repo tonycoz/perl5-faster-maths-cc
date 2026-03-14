@@ -6,7 +6,10 @@
 
 package Faster::Maths::CC 0.001;
 
-use v5.22;
+# need a fix to amagic_call()
+# will probably require 5.44 once it's out since it has other
+# useful changes
+use v5.42;
 use warnings;
 use File::Temp;
 use blib ();

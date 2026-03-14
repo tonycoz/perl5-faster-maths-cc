@@ -3,7 +3,7 @@ use strict;
 use ExtUtils::MakeMaker 6.46;
 use ExtUtils::CppGuess;
 use File::ShareDir::Install;
-use 5.022;
+use 5.042;
 
 install_share "share";
 
@@ -55,8 +55,9 @@ $opts{META_MERGE}{prereqs} =
     {
       requires =>
       {
-        "Test::More" => "0.47",
-        perl => "5.022",
+       "Test::More" => "0.47",
+       # need a fix to amagic_call()
+       perl => "5.042",
       }
     },
     runtime =>
