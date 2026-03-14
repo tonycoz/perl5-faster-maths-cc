@@ -1,15 +1,20 @@
 #!perl
 use Test2::V0;
 use List::Util "min";
+use Config;
 
 skip_all("Author test")
   unless $ENV{AUTHOR_TESTING} && $ENV{AUTHOR_TESTING} eq "tonyc";
 
 my @formatters =
   (
-  ( map "clang-format-$_", qw(23 22 21 20) ),
+  ( map "clang-format-$_", qw(23 22 21 20 19) ),
   "clang-format"
   );
+
+if ($ENV{CLANG_FORMAT}) {
+    @formatters = split /\Q$Config{path_sep}/, $ENV{CLANG_FORMAT};
+}
 
 # look for the formatter
 my $formatter;
@@ -26,7 +31,7 @@ for my $candidate (@formatters) {
   }
 }
 skip_all "No formatter"
-  if $?;
+  unless $out;
 
 open my $srcfh, "<", "docc.cpp"
   or skip_all "Cannot open docc.cpp: $!";
