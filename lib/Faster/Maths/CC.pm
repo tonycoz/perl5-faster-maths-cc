@@ -235,6 +235,9 @@ You can also request working in floating point:
 which, when overloading is also disabled, will work in pure floating
 point, similar to L<Faster::Maths>.
 
+Note that unary negation with "+float" will always do numeric
+negation, it does not support string negation.
+
 For the julia set test case from Faster::Maths this produces
 performance improvements like:
 
