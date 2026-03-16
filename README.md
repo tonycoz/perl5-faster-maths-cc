@@ -5,6 +5,10 @@ and call that instead of the OPs.
 
 Or that's the idea.
 
+This started as a copy of Paul Evans'
+[Faster::Maths](https://metacpan.org/pod/Faster::Maths) but has been
+significantly mangled since then, sorry Paul.
+
 It can produce significantly faster code for what it does, for
 example, comparing:
 
