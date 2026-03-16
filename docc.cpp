@@ -28,6 +28,7 @@ using my_map = std::unordered_map<Key, Value>;
 
 namespace {
 // wrapper for formatting OP *
+// used with std::println("{}", OpPtr{someop})
 struct OpPtr {
     explicit OpPtr(OP *o_) : o(o_) {}
     OP *o;
@@ -73,6 +74,9 @@ my_op_sequence_num(pTHX_ const OP *o) {
     return PL_op_seq;
 }
 
+// std::print() wrapper to log based on a debug flag
+//
+// log(CCDebugFlags::TraceOps, "compiling {}\n", OpPtr{o});
 template <typename... Args>
 void
 log(CCDebugFlags flag, std::format_string<Args...> fmt, Args &&...args) {
@@ -80,6 +84,10 @@ log(CCDebugFlags flag, std::format_string<Args...> fmt, Args &&...args) {
         std::print(stderr, fmt, std::forward<Args>(args)...);
     }
 }
+
+// std::println() wrapper to log based on a debug flag
+//
+// logln(CCDebugFlags::TraceOps, "compiling {}", OpPtr{o});
 template <typename... Args>
 void
 logln(CCDebugFlags flag, std::format_string<Args...> fmt, Args &&...args) {
@@ -87,6 +95,10 @@ logln(CCDebugFlags flag, std::format_string<Args...> fmt, Args &&...args) {
         std::println(stderr, fmt, std::forward<Args>(args)...);
     }
 }
+
+// std::println() wrapper to log if the CCDebugFlags::Debug flag is set
+//
+// debugln("compiling {}", OpPtr{o});
 template <typename... Args>
 void
 debugln(std::format_string<Args...> fmt, Args &&...args) {
@@ -94,7 +106,12 @@ debugln(std::format_string<Args...> fmt, Args &&...args) {
         std::println(stderr, fmt, std::forward<Args>(args)...);
     }
 }
-} // namespace
+} // anonymous namespace
+
+// specialization of std::formatter for OpPtr
+//
+// output includes the OP pointer, optionally the sequence number if
+// CCDebugFlags::OpSeq is set, the numeric op type and the OP_NAME() of the op
 
 template <>
 struct std::formatter<OpPtr> {
@@ -123,24 +140,15 @@ struct std::formatter<OpPtr> {
     }
 };
 
-#if 0
-struct Stack;
-
-template <>
-struct std::formatter<Stack> {
-    constexpr auto parse(std::format_parse_context &ctx) {
-        return ctx.begin();
-    }
-    constexpr std::format_parse_context::const_iterator
-    format(const Stack &s, std::format_context &ctx);
-};
-#endif
-
 namespace {
+
+// the next fragment index to generate
 IV CodeIndex;
 
 typedef void (*fragment_handler)(pTHX_ const UNOP_AUX_item *aux);
 
+// the array of fragment handler function pointers once the module is built and
+// loaded.
 const fragment_handler *fragments;
 size_t fragment_count;
 
@@ -192,21 +200,26 @@ init_debug_flags() {
     }
 }
 
-/* a variable in the PAD, typically a "my" variable, but it can
-   also be a state or our variable.
-*/
+// a variable in the PAD, typically a "my" variable, but it can
+// also be a state variable.  (or maybe fields)
+//
+// These are generated from op_targs so it shouldn't refer to our variables.
+
 struct PadSv {
     PadSv(PADOFFSET index_) : index(index_) { assert(index_ != 0); }
     PadSv() = delete;
     PADOFFSET index = 0; // PAD_SV[index]
 };
 
-/* these start as OP_CONST, but on threaded builds
-   perl moves them to the pad, and the SV won't be valid
-   in a new thread, so we remember the OP (saved in aux)
-   and fetch the correct SV via the OP, whether it's still an
-   OP_CONST or converted to OP_PADSV
-*/
+// these start as OP_CONST, but on threaded builds perl moves them to
+// the pad, and the SV won't be valid in a new thread, so we remember
+// the OP (saved in aux) and fetch the correct SV via the OP,
+// whether it's still an OP_CONST or converted to OP_PADSV.
+//
+// Keeping an index should allow us to cache the generated code in the
+// future, since OP addresses will likely change, but the generated indexes
+// won't change unless the code changes.
+
 struct OpConst {
     OpConst(size_t op_index_, OP *op_) : op_index(op_index_), op(op_) {}
     OpConst() = delete;
@@ -214,27 +227,25 @@ struct OpConst {
     OP *op; // used only during C code generation
 };
 
-/* an SV stored in a C local variable.
-   PadSvs are converted into these to save pad lookups.
-   Operator results can be these if the result isn't always in a
-   PADTMP (as with overloading).
-*/
+// an SV stored in a C local variable.
+// PadSvs are converted into these to save pad lookups.
+//
+// Operator results can be these if the result isn't always in a
+// PADTMP (as with overloading).
 struct LocalSv {
     LocalSv(int local_index_) : local_index(local_index_) {}
     LocalSv() = delete;
     int local_index; // SV *variable named l%d
 };
 
-/* An SV on the C argument stack, we don't know anything about it,
-   so we can't optimize it well
-*/
+// an argument from the perl argument stack an entry to the fragment
 struct StackSv {
     StackSv(ssize_t offset_) : offset(offset_) {}
     StackSv() = delete;
     ssize_t offset; // PL_stack_sp[-offset]
 };
 
-/* Represents an argument on the stack */
+// Represents an argument on the abstract stack
 using ArgType = std::variant<PadSv, OpConst, LocalSv, StackSv>;
 
 #if 0 // we may want this again later
@@ -337,6 +348,7 @@ struct Stack {
     ssize_t over_popped = 0;
 };
 
+// code generation inserters for the various stack value variant types
 std::ostream &
 operator<<(std::ostream &out, const PadSv &psv) {
     dTHX;
@@ -367,6 +379,7 @@ operator<<(std::ostream &out, const LocalSv &lsv) {
     }
 #endif
 
+// summarize the contents of the SV
 void
 sv_summary(pTHX_ std::ostream &out, SV *sv) {
     if (SvGMAGICAL(sv)) {
@@ -442,14 +455,6 @@ operator<<(std::ostream &out, const ArgType &arg) {
     return out;
 }
 
-#if 0
-    std::ostream &
-    operator <<(std::ostream &out, SV *sv) {
-        out << SvPV_nolen(sv);
-        return out;
-    }
-#endif
-
 std::ostream &
 operator<<(std::ostream &out, const Stack &s) {
     for (auto i : s.stack) {
@@ -457,15 +462,6 @@ operator<<(std::ostream &out, const Stack &s) {
     }
     return out;
 }
-
-#if 0
-    template <>
-    constexpr std::format_parse_context::const_iterator
-    std;:formatter<Stack>::format(const Stack &s, std::format_context &ctx) {
-        for (auto i : s.stack) {
-        }
-    }
-#endif
 
 inline bool
 cop_bool_config(pTHX_ const COP *o, std::string_view key) {
@@ -477,7 +473,7 @@ struct CodeFragment;
 
 CodeFragment &operator<<(CodeFragment &os, auto const &v);
 
-/* Used to generate code for an op tree fragment */
+// Used to generate code for an op tree fragment
 struct CodeFragment {
     CodeFragment(pTHX_ const COP *cop, OP *next_op)
         : line(CopLINE(cop)), file(CopFILE(cop)),
@@ -543,17 +539,8 @@ struct CodeFragment {
     CodeFragment &operator=(CodeFragment &&) = delete;
 };
 
-// I wanted to make the inserter below check the v was insertable
-// but got compilation failures and couldn't figure it out
-// template <typename T>
-// concept Insertable = requires (T a) {
-//  { std::declval<std::ostream>() << a };//->std::convertible_to<std::ostream
-//  &>;
-//};
-
-// template <Insertable Val>
-
 // make ostream inserters available as CodeFragment inserters
+// and dump code if requested.
 CodeFragment &
 operator<<(CodeFragment &os, auto const &v) {
     os.code << v;
@@ -569,7 +556,7 @@ inline OP *
 oCCOP_SKIP(OP *o) {
     const UNOP_AUX_item *aux = cUNOP_AUXo->op_aux;
 
-    // I was OPs in UNOP_AUX_item for christmas
+    // I want OPs in UNOP_AUX_item for christmas
     return (OP *)aux[1].pv;
 }
 
@@ -613,6 +600,8 @@ code_finalize(pTHX_ CodeFragment &code, Stack &stack, OP *start, OP *final,
     if (stack.over_popped) {
         code << "rpp_popfree_to(PL_stack_sp-" << stack.over_popped << ");\n";
     }
+
+    // generate code to push any result SVs
     if (stack.size() != 0)
         code << "rpp_extend(" << stack.size() << ");\n";
     for (auto item : stack) {
@@ -620,6 +609,7 @@ code_finalize(pTHX_ CodeFragment &code, Stack &stack, OP *start, OP *final,
         code << "rpp_push_1(" << item << ");\n";
     }
 
+    // wrap the generated code with a function definition
     IV index = CodeIndex++;
     SV *out = Perl_newSVpvf(aTHX_ "static void\nf%" UVf "(pTHX_ "
                                   "const UNOP_AUX_item *aux) {\n",
@@ -628,6 +618,7 @@ code_finalize(pTHX_ CodeFragment &code, Stack &stack, OP *start, OP *final,
     sv_catpvn(out, codestring.c_str(), codestring.size());
     sv_catpvs(out, "}\n");
 
+    // populate @collection with the various bits
     SV *func = Perl_newSVpvf(aTHX_ "f%" UVf, index);
     AV *entry = newAV();
     av_store(entry, 0, out);
@@ -823,6 +814,7 @@ add_unop(pTHX_ OP *o, CodeFragment &code, Stack &stack, std::string_view opname,
         stack.push(std::move(result));
 }
 
+// given a sequence of ops, generate C a C code fragment
 void
 compile_code(pTHX_ CodeFragment &code, OP *start, OP *final, OP *prev) {
     Stack stack;
@@ -842,7 +834,6 @@ compile_code(pTHX_ CodeFragment &code, OP *start, OP *final, OP *prev) {
             break;
 
         case OP_ADD:
-            // FIXME: SvSETMAGIC() as needed
             add_binop(aTHX_ o, code, stack, "do_add", "+");
             break;
 
@@ -1063,7 +1054,7 @@ register_fragments(pTHX_ const fragment_handler *frags, size_t frag_count) {
         std::cerr << "Registered " << frag_count << " handlers\n";
 }
 
-} // namespace
+} // anonymous namespace
 
 namespace fmcc {
 
