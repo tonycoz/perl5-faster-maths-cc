@@ -25,6 +25,9 @@ my_sv_2num(pTHX_ SV *sv) {
     return sv_2mortal(newSVuv(PTR2UV(SvRV(sv))));
 }
 
+// sv_2num without overloading
+// avoids the runtime check perl sv_2num() does assuming the original
+// function was called under "no overloading;"
 static inline SV *
 my_sv_2num_noov(pTHX_ SV *sv) {
     if (!SvROK(sv))
@@ -33,9 +36,19 @@ my_sv_2num_noov(pTHX_ SV *sv) {
     return sv_2mortal(newSVuv(PTR2UV(SvRV(sv))));
 }
 
-/* The API try_amagic() functions work with the stack, which
-   we don't here.
-*/
+// binary overloading
+//
+// like Perl_try_amagic_bin() except that the parameters are supplied
+// directly rather than on the stack.
+//
+// Expects the caller to have done SvGETMAGIC()
+//
+// Assigns the result to out if mutator is true, and does
+// SvSETMAGIC().
+//
+// If flags has AMGf_numeric, replace the SVs with numified versions if
+// amagic_call() didn't find any overload.
+
 static SV *
 do_try_amagic_bin(pTHX_ SV *out, SV **left, SV **right, int method,
                   int flags, bool mutator) {
@@ -61,15 +74,23 @@ do_try_amagic_bin(pTHX_ SV *out, SV **left, SV **right, int method,
     return NULL;
 }
 
+// If either parameter is a reference, try to invoke overloading
+// This should stay short, as it's inline
 PERL_STATIC_INLINE SV *
 my_try_amagic_bin(pTHX_ SV *out, SV **left, SV **right, int method, int flags,
                   bool mutator) {
     /* eventually this will happen during code gen */
+    // this is probably redundant now.
     if (UNLIKELY(PL_hints & HINT_NO_AMAGIC))
         return NULL;
-    return UNLIKELY((SvFLAGS(*left) | SvFLAGS(*right)) & (SVf_ROK|SVs_GMG))
+    return UNLIKELY((SvFLAGS(*left) | SvFLAGS(*right)) & SVf_ROK)
       ? do_try_amagic_bin(aTHX_ out, left, right, method, flags, mutator) : NULL;
 }
+
+// unary overloading
+//
+// like Perl_try_amagic_un() except that the parameters are supplied
+// directly rather than on the stack.
 
 static SV *
 do_try_amagic_un(pTHX_ SV **psv, int method, int flags) {
@@ -98,7 +119,8 @@ my_try_amagic_un(pTHX_ SV **psv, int method, int flags) {
       ? do_try_amagic_un(aTHX_ psv, method, flags) : NULL;
 }
 
-/* adapted from TARGi() */
+// set the IV for a SV if the SV is simple
+// adapted from TARGi()
 static inline void
 fast_sv_setiv(pTHX_ SV *sv, IV iv) {
     if (LIKELY(
@@ -116,7 +138,8 @@ fast_sv_setiv(pTHX_ SV *sv, IV iv) {
       sv_setiv_mg(sv, iv);
 }
 
-/* adapted from TARGn */
+// set the NV for a SV if that's simple to do
+// adapted from TARGn
 static inline void
 fast_sv_setnv(pTHX_ SV *sv, NV n) {
     if (LIKELY(
@@ -133,6 +156,7 @@ fast_sv_setnv(pTHX_ SV *sv, NV n) {
         sv_setnv_mg(sv, n);
 }
 
+// set the SV to an IV in the common case the UV is <= IV_MAX
 // adapted from TARGu()
 static inline void
 fast_sv_setuv(pTHX_ SV *sv, UV u) {
@@ -151,6 +175,10 @@ fast_sv_setuv(pTHX_ SV *sv, UV u) {
   else
     sv_setuv_mg(sv, u);
 }
+
+
+// arithmetic implementations, adapted from the pp_add, etc
+// implementations
 
 static inline bool
 my_iv_add_may_overflow(IV il, IV ir, IV *result) {
@@ -309,6 +337,9 @@ my_lossless_NV_to_IV(NV nv, IV *ivp)
     return FALSE;
 }
 
+// attempt to add two SVs, amagic must have been attemptted or
+// otherwise resolved
+
 static void
 do_add_raw(pTHX_ SV *out, SV *svl, SV *svr) {
     /* magic must have been called already */
@@ -458,6 +489,7 @@ do_add_raw(pTHX_ SV *out, SV *svl, SV *svr) {
     fast_sv_setnv(aTHX_ out, nv);
 }
 
+// full addition implementation, supports overloading
 static inline SV *
 do_add(pTHX_ SV *out, SV *left, SV *right, int amagic_flags, bool mutator) {
     SvGETMAGIC(left);
@@ -472,6 +504,7 @@ do_add(pTHX_ SV *out, SV *left, SV *right, int amagic_flags, bool mutator) {
     return out;
 }
 
+// addition implementation, integer preserving but no overloading
 static inline void
 do_add_noov(pTHX_ SV *out, SV *svl, SV *svr) {
     SvGETMAGIC(svl);
@@ -482,6 +515,8 @@ do_add_noov(pTHX_ SV *out, SV *svl, SV *svr) {
     do_add_raw(aTHX_ out, svl, svr);
 }
 
+// addition implementation with overloading, but not integer
+// preserving
 static inline SV *
 do_add_ovfloat(pTHX_ SV *out, SV *left, SV *right,
                int amagic_flags, bool mutator) {
@@ -498,6 +533,7 @@ do_add_ovfloat(pTHX_ SV *out, SV *left, SV *right,
     return out;
 }
 
+// add two SVs, magic and amagic must have been handled already
 static void
 do_subtract_raw(pTHX_ SV *out, SV *svl, SV *svr) {
     NV nv;
@@ -646,6 +682,7 @@ do_subtract_raw(pTHX_ SV *out, SV *svl, SV *svr) {
     sv_setnv(out, nv);
 }
 
+// full subtraction implementation, supports overloading
 static inline SV *
 do_subtract(pTHX_ SV *out, SV *left, SV *right, int amagic_flags,
             bool mutator) {
@@ -661,6 +698,7 @@ do_subtract(pTHX_ SV *out, SV *left, SV *right, int amagic_flags,
     return out;
 }
 
+// subtraction implementation, integer preserving but no overloading
 static inline void
 do_subtract_noov(pTHX_ SV *out, SV *svl, SV *svr) {
     SvGETMAGIC(svl);
@@ -671,6 +709,8 @@ do_subtract_noov(pTHX_ SV *out, SV *svl, SV *svr) {
     do_subtract_raw(aTHX_ out, svl, svr);
 }
 
+// subtraction implementation with overloading, but not integer
+// preserving
 static inline SV *
 do_subtract_ovfloat(pTHX_ SV *out, SV *left, SV *right,
                int amagic_flags, bool mutator) {
@@ -687,6 +727,8 @@ do_subtract_ovfloat(pTHX_ SV *out, SV *left, SV *right,
     return out;
 }
 
+// attempt to multiply two SVs preserving integers, amagic and magic
+// must have been attempted or otherwise resolved
 static void
 do_multiply_raw(pTHX_ SV *out, SV *svl, SV *svr) {
 #ifdef PERL_PRESERVE_IVUV
@@ -792,6 +834,8 @@ do_multiply_raw(pTHX_ SV *out, SV *svl, SV *svr) {
     }
 }
 
+// multiply two SVs, supporting magic and overloading, and preserving
+// integer results
 static inline SV *
 do_multiply(pTHX_ SV *out, SV *left, SV *right, int amagic_flags,
             bool mutator) {
@@ -807,6 +851,7 @@ do_multiply(pTHX_ SV *out, SV *left, SV *right, int amagic_flags,
     return out;
 }
 
+// multiplication implementation for "no overloading;"
 static inline void
 do_multiply_noov(pTHX_ SV *out, SV *svl, SV *svr) {
     SvGETMAGIC(svl);
@@ -817,6 +862,8 @@ do_multiply_noov(pTHX_ SV *out, SV *svl, SV *svr) {
     do_multiply_raw(aTHX_ out, svl, svr);
 }
 
+// multiplication overloading, supports overloading but doesn't
+// attempt to preserve integers
 static inline SV *
 do_multiply_ovfloat(pTHX_ SV *out, SV *left, SV *right,
                     int amagic_flags, bool mutator) {
@@ -833,6 +880,8 @@ do_multiply_ovfloat(pTHX_ SV *out, SV *left, SV *right,
     return out;
 }
 
+// divide two SVs preserving integers, magic and amagic should have
+// been have resolved by the caller.
 static void
 do_divide_raw(pTHX_ SV *out, SV *svl, SV *svr) {
     /* Only try to do UV divide first
@@ -944,6 +993,7 @@ do_divide_raw(pTHX_ SV *out, SV *svl, SV *svr) {
     }
 }
 
+// divide two SVs, handling magic and overloading
 static inline SV *
 do_divide(pTHX_ SV *out, SV *left, SV *right, int amagic_flags,
           bool mutator) {
@@ -959,6 +1009,7 @@ do_divide(pTHX_ SV *out, SV *left, SV *right, int amagic_flags,
     return out;
 }
 
+// divide two SVs, ignoring overloading
 static inline void
 do_divide_noov(pTHX_ SV *out, SV *svl, SV *svr) {
     SvGETMAGIC(svl);
@@ -969,6 +1020,8 @@ do_divide_noov(pTHX_ SV *out, SV *svl, SV *svr) {
     do_divide_raw(aTHX_ out, svl, svr);
 }
 
+// divide two SVs, handling overloading, but not attempting to
+// preserve integers
 static inline SV *
 do_divide_ovfloat(pTHX_ SV *out, SV *left, SV *right,
                   int amagic_flags, bool mutator) {
@@ -985,6 +1038,7 @@ do_divide_ovfloat(pTHX_ SV *out, SV *left, SV *right,
     return out;
 }
 
+// negate a string if it doesn't look numeric
 static bool
 my_negate_string(pTHX_ SV *out, SV *sv) {
     /* based on S_negate_string() in pp.c */
@@ -1012,6 +1066,8 @@ my_negate_string(pTHX_ SV *out, SV *sv) {
     return true;
 }
 
+// negate a SV, preserving integers, magic and amagic should already
+// have been handled
 static void
 do_negate_low(pTHX_ SV *out, SV *sv) {
     /* magic should already be called */
@@ -1059,6 +1115,7 @@ do_negate_low(pTHX_ SV *out, SV *sv) {
     }
 }
 
+// negate a SV, handling magic and amagic
 static inline SV *
 do_negate(pTHX_ SV *out, SV *sv) {
   SvGETMAGIC(sv);
@@ -1070,6 +1127,8 @@ do_negate(pTHX_ SV *out, SV *sv) {
   return out;
 }
 
+// megate a SV, handles magic and amagic but doesn't attempt to
+// handle string negation nor preserves integers
 static inline SV *
 do_negate_ovfloat(pTHX_ SV *out, SV *sv) {
   SvGETMAGIC(sv);
