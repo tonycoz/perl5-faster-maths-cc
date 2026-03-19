@@ -1116,4 +1116,13 @@ do_negate_ovfloat(pTHX_ SV *out, SV *sv) {
   return out;
 }
 
+// negate a SV, without overloading but with string and large integer
+// support
+static inline void
+do_negate_noov(pTHX_ SV *out, SV *sv) {
+    SvGETMAGIC(sv);
+    sv = my_sv_2num_noov(aTHX_ sv);
+    do_negate_low(aTHX_ out, sv);
+}
+
 /* API END */

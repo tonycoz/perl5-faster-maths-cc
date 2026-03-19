@@ -20,6 +20,7 @@ t/10arith.t
 t/20maths.t
 t/30overload.t
 t/40code.t
+t/50noov.t
 t/95benchmark.t
 t/98format.t
 t/99pod.t
