@@ -6,15 +6,21 @@
 #include "perl.h"
 #include "XSUB.h"
 #include "ppport.h"
+#include <assert.h>
 
 typedef void (*fragment_handler)(pTHX_ const UNOP_AUX_item *aux);
+
+#define assert_AMAGIC() \
+  assert(!(PL_curcop->cop_hints & HINT_NO_AMAGIC))
+#define assert_NO_AMAGIC() \
+  assert(PL_curcop->cop_hints & HINT_NO_AMAGIC)
 
 /* API START */
 
 /* alas, sv_2num() isn't API */
 static SV *
 my_sv_2num(pTHX_ SV *sv) {
-    assert(!(PL_curcop->cop_hints & HINT_NO_AMAGIC));
+    assert_AMAGIC();
     if (!SvROK(sv))
         return sv;
     if (SvAMAGIC(sv)) {
@@ -31,7 +37,7 @@ my_sv_2num(pTHX_ SV *sv) {
 // function was called under "no overloading;"
 static inline SV *
 my_sv_2num_noov(pTHX_ SV *sv) {
-    assert(PL_curcop->cop_hints & HINT_NO_AMAGIC);
+    assert_NO_AMAGIC();
     if (!SvROK(sv))
         return sv;
 
@@ -54,6 +60,7 @@ my_sv_2num_noov(pTHX_ SV *sv) {
 static SV *
 do_try_amagic_bin(pTHX_ SV *out, SV **left, SV **right, int method,
                   int flags, bool mutator) {
+    assert_AMAGIC();
     SvGETMAGIC(*left);
     if (*left != *right)
         SvGETMAGIC(*right);
@@ -84,10 +91,7 @@ do_try_amagic_bin(pTHX_ SV *out, SV **left, SV **right, int method,
 PERL_STATIC_INLINE SV *
 my_try_amagic_bin(pTHX_ SV *out, SV **left, SV **right, int method, int flags,
                   bool mutator) {
-    /* eventually this will happen during code gen */
-    // this is probably redundant now.
-    if (UNLIKELY(PL_hints & HINT_NO_AMAGIC))
-        return NULL;
+    assert_AMAGIC();
     return UNLIKELY((SvFLAGS(*left) | SvFLAGS(*right)) & (SVf_ROK|SVs_GMG))
       ? do_try_amagic_bin(aTHX_ out, left, right, method, flags, mutator) : NULL;
 }
@@ -99,6 +103,7 @@ my_try_amagic_bin(pTHX_ SV *out, SV **left, SV **right, int method, int flags,
 
 static SV *
 do_try_amagic_un(pTHX_ SV **psv, int method, int flags) {
+    assert_AMAGIC();
     SvGETMAGIC(*psv);
     if (SvAMAGIC(*psv)) {
         OP *saved = PL_op; /* to get scalar context /cry */
@@ -118,9 +123,7 @@ do_try_amagic_un(pTHX_ SV **psv, int method, int flags) {
 
 PERL_STATIC_INLINE SV *
 my_try_amagic_un(pTHX_ SV **psv, int method, int flags) {
-    /* eventually this will happen during code gen */
-    if (UNLIKELY(PL_hints & HINT_NO_AMAGIC))
-        return NULL;
+    assert_AMAGIC();
     return UNLIKELY((SvFLAGS(*psv)) & (SVf_ROK|SVs_GMG))
       ? do_try_amagic_un(aTHX_ psv, method, flags) : NULL;
 }
@@ -509,6 +512,7 @@ do_add(pTHX_ SV *out, SV *left, SV *right, int amagic_flags, bool mutator) {
 // addition implementation, integer preserving but no overloading
 static inline void
 do_add_noov(pTHX_ SV *out, SV *svl, SV *svr) {
+    assert_NO_AMAGIC();
     SvGETMAGIC(svl);
     if (svl != svr)
         SvGETMAGIC(svr);
@@ -522,6 +526,7 @@ do_add_noov(pTHX_ SV *out, SV *svl, SV *svr) {
 static inline SV *
 do_add_ovfloat(pTHX_ SV *out, SV *left, SV *right,
                int amagic_flags, bool mutator) {
+    assert_AMAGIC();
     SV *result = my_try_amagic_bin(aTHX_ out, &left, &right, add_amg,
                                    amagic_flags | AMGf_numeric, mutator);
     if (result)
@@ -685,6 +690,7 @@ do_subtract_raw(pTHX_ SV *out, SV *svl, SV *svr) {
 static inline SV *
 do_subtract(pTHX_ SV *out, SV *left, SV *right, int amagic_flags,
             bool mutator) {
+    assert_AMAGIC();
     SV *result = my_try_amagic_bin(aTHX_ out, &left, &right, subtr_amg,
                                    amagic_flags | AMGf_numeric, mutator);
     if (result)
@@ -696,6 +702,7 @@ do_subtract(pTHX_ SV *out, SV *left, SV *right, int amagic_flags,
 // subtraction implementation, integer preserving but no overloading
 static inline void
 do_subtract_noov(pTHX_ SV *out, SV *svl, SV *svr) {
+    assert_NO_AMAGIC();
     SvGETMAGIC(svl);
     if (svl != svr)
         SvGETMAGIC(svr);
@@ -709,6 +716,7 @@ do_subtract_noov(pTHX_ SV *out, SV *svl, SV *svr) {
 static inline SV *
 do_subtract_ovfloat(pTHX_ SV *out, SV *left, SV *right,
                int amagic_flags, bool mutator) {
+    assert_AMAGIC();
     SV *result = my_try_amagic_bin(aTHX_ out, &left, &right, subtr_amg,
                                    amagic_flags | AMGf_numeric, mutator);
     if (result)
@@ -831,6 +839,7 @@ do_multiply_raw(pTHX_ SV *out, SV *svl, SV *svr) {
 static inline SV *
 do_multiply(pTHX_ SV *out, SV *left, SV *right, int amagic_flags,
             bool mutator) {
+    assert_AMAGIC();
     SV *result = my_try_amagic_bin(aTHX_ out, &left, &right, mult_amg,
                                    amagic_flags | AMGf_numeric, mutator);
     if (result)
@@ -842,6 +851,7 @@ do_multiply(pTHX_ SV *out, SV *left, SV *right, int amagic_flags,
 // multiplication implementation for "no overloading;"
 static inline void
 do_multiply_noov(pTHX_ SV *out, SV *svl, SV *svr) {
+    assert_NO_AMAGIC();
     SvGETMAGIC(svl);
     if (svl != svr)
         SvGETMAGIC(svr);
@@ -855,6 +865,7 @@ do_multiply_noov(pTHX_ SV *out, SV *svl, SV *svr) {
 static inline SV *
 do_multiply_ovfloat(pTHX_ SV *out, SV *left, SV *right,
                     int amagic_flags, bool mutator) {
+    assert_AMAGIC();
     SV *result = my_try_amagic_bin(aTHX_ out, &left, &right, mult_amg,
                                    amagic_flags | AMGf_numeric, mutator);
     if (result)
@@ -982,6 +993,7 @@ do_divide_raw(pTHX_ SV *out, SV *svl, SV *svr) {
 static inline SV *
 do_divide(pTHX_ SV *out, SV *left, SV *right, int amagic_flags,
           bool mutator) {
+    assert_AMAGIC();
     SV *result = my_try_amagic_bin(aTHX_ out, &left, &right, div_amg,
                                    amagic_flags | AMGf_numeric, mutator);
     if (result)
@@ -993,6 +1005,7 @@ do_divide(pTHX_ SV *out, SV *left, SV *right, int amagic_flags,
 // divide two SVs, ignoring overloading
 static inline void
 do_divide_noov(pTHX_ SV *out, SV *svl, SV *svr) {
+    assert_NO_AMAGIC();
     SvGETMAGIC(svl);
     if (svl != svr)
         SvGETMAGIC(svr);
@@ -1006,6 +1019,7 @@ do_divide_noov(pTHX_ SV *out, SV *svl, SV *svr) {
 static inline SV *
 do_divide_ovfloat(pTHX_ SV *out, SV *left, SV *right,
                   int amagic_flags, bool mutator) {
+    assert_AMAGIC();
     SV *result = my_try_amagic_bin(aTHX_ out, &left, &right, div_amg,
                                    amagic_flags | AMGf_numeric, mutator);
     if (result)
@@ -1096,30 +1110,33 @@ do_negate_low(pTHX_ SV *out, SV *sv) {
 // negate a SV, handling magic and amagic
 static inline SV *
 do_negate(pTHX_ SV *out, SV *sv) {
-  SV *result = my_try_amagic_un(aTHX_ &sv, neg_amg, AMGf_numeric);
-  if (result)
-    return result;
+    assert_AMAGIC();
+    SV *result = my_try_amagic_un(aTHX_ &sv, neg_amg, AMGf_numeric);
+    if (result)
+        return result;
 
-  do_negate_low(aTHX_ out, sv);
-  return out;
+    do_negate_low(aTHX_ out, sv);
+    return out;
 }
 
 // megate a SV, handles magic and amagic but doesn't attempt to
 // handle string negation nor preserves integers
 static inline SV *
 do_negate_ovfloat(pTHX_ SV *out, SV *sv) {
-  SV *result = my_try_amagic_un(aTHX_ &sv, neg_amg, AMGf_numeric);
-  if (result)
-    return result;
+    assert_AMAGIC();
+    SV *result = my_try_amagic_un(aTHX_ &sv, neg_amg, AMGf_numeric);
+    if (result)
+        return result;
 
-  fast_sv_setnv(aTHX_ out, -SvNV_nomg(sv));
-  return out;
+    fast_sv_setnv(aTHX_ out, -SvNV_nomg(sv));
+    return out;
 }
 
 // negate a SV, without overloading but with string and large integer
 // support
 static inline void
 do_negate_noov(pTHX_ SV *out, SV *sv) {
+    assert_NO_AMAGIC();
     SvGETMAGIC(sv);
     sv = my_sv_2num_noov(aTHX_ sv);
     do_negate_low(aTHX_ out, sv);
