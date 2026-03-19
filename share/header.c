@@ -14,6 +14,7 @@ typedef void (*fragment_handler)(pTHX_ const UNOP_AUX_item *aux);
 /* alas, sv_2num() isn't API */
 static SV *
 my_sv_2num(pTHX_ SV *sv) {
+    assert(!(PL_curcop->cop_hints & HINT_NO_AMAGIC));
     if (!SvROK(sv))
         return sv;
     if (SvAMAGIC(sv)) {
@@ -30,6 +31,7 @@ my_sv_2num(pTHX_ SV *sv) {
 // function was called under "no overloading;"
 static inline SV *
 my_sv_2num_noov(pTHX_ SV *sv) {
+    assert(PL_curcop->cop_hints & HINT_NO_AMAGIC);
     if (!SvROK(sv))
         return sv;
 

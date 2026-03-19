@@ -1,0 +1,11 @@
+blib
+*~
+*.o
+*.bs
+TestAPI.c
+header.h
+ppport.h
+MYMETA.*
+Makefile
+MANIFEST.bak
+build.txt

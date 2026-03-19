@@ -17,6 +17,7 @@ use Devel::PPPort ();
 use File::Spec ();
 use File::ShareDir ();
 use Carp ();
+use version;
 
 require XSLoader;
 XSLoader::load();

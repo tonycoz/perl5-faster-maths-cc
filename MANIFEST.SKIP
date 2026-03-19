@@ -14,6 +14,16 @@
 ^pm_to_blib$
 ^MANIFEST\.bak$
 
+# from the API test module
+^t/apitest/MYMETA\.
+^t/apitest/Makefile$
+^t/apitest/TestAPI\.(c|bs)$
+^t/apitest/blib
+^t/apitest/build\.txt$
+^t/apitest/header\.h$
+^t/apitest/pm_to_blib$
+^t/apitest/ppport\.h$
+
 # editor droppings
 ~$
 \.#

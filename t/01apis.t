@@ -6,131 +6,34 @@
 # This can be run separately without building the FMC module itself.
 use strict;
 use warnings;
-#use Test2::V0;
-use File::Temp;
+use Test2::V0;
 use v5.40;
 require blib;
 use Devel::PPPort;
 use Cwd qw(getcwd);
-use File::ShareDir qw(dist_file);
 
-sub note; # debugger breaks deep in Test2
-sub ok;
-sub diag;
-sub done_testing;
+# part one: build the module
+my $start_dir = getcwd();
+my $build_dir = "$start_dir/t/apitest";
 
-my $header_file = dist_file("Faster-Maths-CC", "header.c");
-
-open my $fh, "<", $header_file
-  or die "Cannot open $header_file: $!";
-
-my $version;
-
-my $api_lines;
-my @apis;
-my $in_api;
-my @api_args;
-my $api_name;
-while (<$fh>) {
-  $api_lines .=  $_;
-  # I originally tried to define XSUBs for each API, but
-  # some parameter types don't work well for that
-#   if (/^(?:static|PERL_STATIC_INLINE)\s+(.*)$/) {
-#     die "Unexpected ^static in API definition" if $in_api;
-#     push @apis, "$1\n";
-#     note $1;
-#     @api_args = ();
-#     undef $api_name;
-#     ++$in_api;
-#   }
-#   elsif ($in_api) {
-#     my $orig = $_;
-#     if (/^(\w+)\(/) {
-#       $api_name and die "Extra API name $1 found (already saw $api_name)";
-#       $api_name = $1;
-#     }
-#     s/pTHX_\s+//;
-#     my $at_end = s/\{//;
-#     my $args_only = $_ =~ s/\)\s*$//r;
-#     for my $arg (split /,/, $args_only) {
-#       $arg =~ /(\w+)$/
-#         or die "Failed to parse argument name from $arg ($orig)";
-#       push @api_args, $1;
-#     }
-#     $apis[-1] .= $_;
-#     if ($at_end) {
-#       my $args = join ", ", @api_args;
-#       $in_api = 0;
-#       $apis[-1] .= <<"EOS";
-# CODE:
-#     $api_name(aTHX_ $args);
-# EOS
-#     }
-#
-#    note $_;
-#  }
+unless (-d "$build_dir/ppport.h") {
+  Devel::PPPort::WriteFile("t/apitest/ppport.h");
 }
 
-my $cleanup = !$ENV{PERL_FMC_KEEP};
-my $build_dir = File::Temp->newdir(CLEANUP => $cleanup);
-diag "build directory $build_dir" unless $cleanup;
-
-my $xs = $api_lines;
-
-$xs .= <<'EOS';
-
-MODULE = TestCCAPI
-
-PROTOTYPES: DISABLE
-
-BOOT:
-    1;
-
-EOS
-
-# for my $api (@apis) {
-#   $xs .= "$api\n\n";
-# }
-
-save_file("$build_dir/TestCCAPI.xs", $xs);
-
-save_file("$build_dir/Makefile.PL", <<'MKMF');
-#!perl -w
-use strict;
-use ExtUtils::MakeMaker;
-
-WriteMakefile(
-    NAME 	=> 'TestCCAPI',
-    VERSION_FROM => 'TestCCAPI.pm',
-    OBJECT       => '$(BASEEXT)$(OBJ_EXT)',
-);
-
-MKMF
-
-save_file("$build_dir/TestCCAPI.pm", <<EOS);
-package TestCCAPI;
-use v5.40;
-
-require XSLoader;
-our \$VERSION = "1.000";
-
-XSLoader::load();
-
-1;
-
-EOS
-
-Devel::PPPort::WriteFile("$build_dir/ppport.h");
-
 my $build_outfile = "$build_dir/build.txt";
-my $start_dir = getcwd();
+my $makefile = "$build_dir/Makefile";
+my $makefile_pl = "$build_dir/Makefile.PL";
 my $good = eval {
   chdir $build_dir
     or die "Cannot chdir to $build_dir: $!";
-  system "$^X Makefile.PL >$build_outfile 2>&1"
-    and die "Cannot Makefile.PL: $?";
+  if (!-e $makefile || -M $makefile > -M $makefile_pl) {
+    system "$^X Makefile.PL >$build_outfile 2>&1"
+      and die "Cannot Makefile.PL: $?";
+  }
   system "make >>$build_outfile 2>&1"
     and die "Cannot make: $?";
+  system "make test >>$build_outfile 2>&1"
+    and die "Cannot make test: $?";
   1;
 };
 my $err = $@;
@@ -158,28 +61,35 @@ sub save_file($name, $content) {
     or die "Cannot close $name; $!";
 }
 
-sub note {
-  my $out = join "", @_;
-  $out =~ s/^/# /gm;
-  $out .= "\n" unless $out =~ /\n\z/;
-  print $out;
-}
+# sub note {
+#   my $out = join "", @_;
+#   $out =~ s/^/# /gm;
+#   $out .= "\n" unless $out =~ /\n\z/;
+#   print $out;
+# }
 
-sub diag {
-  my $out = join "", @_;
-  $out =~ s/^/# /gm;
-  $out .= "\n" unless $out =~ /\n\z/;
-  print STDERR $out;
-}
+# sub diag {
+#   my $out = join "", @_;
+#   $out =~ s/^/# /gm;
+#   $out .= "\n" unless $out =~ /\n\z/;
+#   print STDERR $out;
+# }
 
-my $test_num;
-sub ok ($ok, $name) {
-  ++$test_num;
-  print "not " unless $ok;
-  print "ok $test_num $name\n";
-  $ok;
-}
+# my $test_num;
+# sub ok ($ok, $name) {
+#   ++$test_num;
+#   print "not " unless $ok;
+#   print "ok $test_num $name\n";
+#   $ok;
+# }
 
-sub done_testing {
-  print "1..$test_num\n";
-}
+# sub done_testing() {
+#   print "1..$test_num\n";
+# }
+
+# sub BAIL_OUT ($msg) {
+#   ok(0, $msg);
+#   done_testing();
+#   exit(255);
+# }
+
