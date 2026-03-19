@@ -54,6 +54,9 @@ my_sv_2num_noov(pTHX_ SV *sv) {
 static SV *
 do_try_amagic_bin(pTHX_ SV *out, SV **left, SV **right, int method,
                   int flags, bool mutator) {
+    SvGETMAGIC(*left);
+    if (*left != *right)
+        SvGETMAGIC(*right);
     if (SvAMAGIC(*left) || SvAMAGIC(*right)) {
         OP *saved = PL_op; /* to get scalar context /cry */
         PL_op = NULL;
@@ -85,7 +88,7 @@ my_try_amagic_bin(pTHX_ SV *out, SV **left, SV **right, int method, int flags,
     // this is probably redundant now.
     if (UNLIKELY(PL_hints & HINT_NO_AMAGIC))
         return NULL;
-    return UNLIKELY((SvFLAGS(*left) | SvFLAGS(*right)) & SVf_ROK)
+    return UNLIKELY((SvFLAGS(*left) | SvFLAGS(*right)) & (SVf_ROK|SVs_GMG))
       ? do_try_amagic_bin(aTHX_ out, left, right, method, flags, mutator) : NULL;
 }
 
@@ -96,6 +99,7 @@ my_try_amagic_bin(pTHX_ SV *out, SV **left, SV **right, int method, int flags,
 
 static SV *
 do_try_amagic_un(pTHX_ SV **psv, int method, int flags) {
+    SvGETMAGIC(*psv);
     if (SvAMAGIC(*psv)) {
         OP *saved = PL_op; /* to get scalar context /cry */
         PL_op = NULL;
@@ -494,10 +498,6 @@ do_add_raw(pTHX_ SV *out, SV *svl, SV *svr) {
 // full addition implementation, supports overloading
 static inline SV *
 do_add(pTHX_ SV *out, SV *left, SV *right, int amagic_flags, bool mutator) {
-    SvGETMAGIC(left);
-    if (left != right)
-        SvGETMAGIC(right);
-
     SV *result = my_try_amagic_bin(aTHX_ out, &left, &right, add_amg,
                                    amagic_flags | AMGf_numeric, mutator);
     if (result)
@@ -522,9 +522,6 @@ do_add_noov(pTHX_ SV *out, SV *svl, SV *svr) {
 static inline SV *
 do_add_ovfloat(pTHX_ SV *out, SV *left, SV *right,
                int amagic_flags, bool mutator) {
-    SvGETMAGIC(left);
-    if (left != right)
-        SvGETMAGIC(right);
     SV *result = my_try_amagic_bin(aTHX_ out, &left, &right, add_amg,
                                    amagic_flags | AMGf_numeric, mutator);
     if (result)
@@ -688,10 +685,6 @@ do_subtract_raw(pTHX_ SV *out, SV *svl, SV *svr) {
 static inline SV *
 do_subtract(pTHX_ SV *out, SV *left, SV *right, int amagic_flags,
             bool mutator) {
-    SvGETMAGIC(left);
-    if (left != right)
-        SvGETMAGIC(right);
-
     SV *result = my_try_amagic_bin(aTHX_ out, &left, &right, subtr_amg,
                                    amagic_flags | AMGf_numeric, mutator);
     if (result)
@@ -716,9 +709,6 @@ do_subtract_noov(pTHX_ SV *out, SV *svl, SV *svr) {
 static inline SV *
 do_subtract_ovfloat(pTHX_ SV *out, SV *left, SV *right,
                int amagic_flags, bool mutator) {
-    SvGETMAGIC(left);
-    if (left != right)
-        SvGETMAGIC(right);
     SV *result = my_try_amagic_bin(aTHX_ out, &left, &right, subtr_amg,
                                    amagic_flags | AMGf_numeric, mutator);
     if (result)
@@ -841,10 +831,6 @@ do_multiply_raw(pTHX_ SV *out, SV *svl, SV *svr) {
 static inline SV *
 do_multiply(pTHX_ SV *out, SV *left, SV *right, int amagic_flags,
             bool mutator) {
-    SvGETMAGIC(left);
-    if (left != right)
-        SvGETMAGIC(right);
-
     SV *result = my_try_amagic_bin(aTHX_ out, &left, &right, mult_amg,
                                    amagic_flags | AMGf_numeric, mutator);
     if (result)
@@ -869,9 +855,6 @@ do_multiply_noov(pTHX_ SV *out, SV *svl, SV *svr) {
 static inline SV *
 do_multiply_ovfloat(pTHX_ SV *out, SV *left, SV *right,
                     int amagic_flags, bool mutator) {
-    SvGETMAGIC(left);
-    if (left != right)
-        SvGETMAGIC(right);
     SV *result = my_try_amagic_bin(aTHX_ out, &left, &right, mult_amg,
                                    amagic_flags | AMGf_numeric, mutator);
     if (result)
@@ -999,10 +982,6 @@ do_divide_raw(pTHX_ SV *out, SV *svl, SV *svr) {
 static inline SV *
 do_divide(pTHX_ SV *out, SV *left, SV *right, int amagic_flags,
           bool mutator) {
-    SvGETMAGIC(left);
-    if (left != right)
-        SvGETMAGIC(right);
-
     SV *result = my_try_amagic_bin(aTHX_ out, &left, &right, div_amg,
                                    amagic_flags | AMGf_numeric, mutator);
     if (result)
@@ -1027,9 +1006,6 @@ do_divide_noov(pTHX_ SV *out, SV *svl, SV *svr) {
 static inline SV *
 do_divide_ovfloat(pTHX_ SV *out, SV *left, SV *right,
                   int amagic_flags, bool mutator) {
-    SvGETMAGIC(left);
-    if (left != right)
-        SvGETMAGIC(right);
     SV *result = my_try_amagic_bin(aTHX_ out, &left, &right, div_amg,
                                    amagic_flags | AMGf_numeric, mutator);
     if (result)
@@ -1120,7 +1096,6 @@ do_negate_low(pTHX_ SV *out, SV *sv) {
 // negate a SV, handling magic and amagic
 static inline SV *
 do_negate(pTHX_ SV *out, SV *sv) {
-  SvGETMAGIC(sv);
   SV *result = my_try_amagic_un(aTHX_ &sv, neg_amg, AMGf_numeric);
   if (result)
     return result;
@@ -1133,7 +1108,6 @@ do_negate(pTHX_ SV *out, SV *sv) {
 // handle string negation nor preserves integers
 static inline SV *
 do_negate_ovfloat(pTHX_ SV *out, SV *sv) {
-  SvGETMAGIC(sv);
   SV *result = my_try_amagic_un(aTHX_ &sv, neg_amg, AMGf_numeric);
   if (result)
     return result;
