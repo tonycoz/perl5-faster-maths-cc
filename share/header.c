@@ -527,7 +527,7 @@ do_add_ovfloat(pTHX_ SV *out, SV *left, SV *right,
     if (result)
         return result;
 
-    fast_sv_setnv(aTHX_ out, SvNV(left) + SvNV(right));
+    fast_sv_setnv(aTHX_ out, SvNV_nomg(left) + SvNV_nomg(right));
 
     return out;
 }
@@ -714,7 +714,7 @@ do_subtract_ovfloat(pTHX_ SV *out, SV *left, SV *right,
     if (result)
         return result;
 
-    fast_sv_setnv(aTHX_ out, SvNV(left) - SvNV(right));
+    fast_sv_setnv(aTHX_ out, SvNV_nomg(left) - SvNV_nomg(right));
 
     return out;
 }
@@ -860,7 +860,7 @@ do_multiply_ovfloat(pTHX_ SV *out, SV *left, SV *right,
     if (result)
         return result;
 
-    fast_sv_setnv(aTHX_ out, SvNV(left) * SvNV(right));
+    fast_sv_setnv(aTHX_ out, SvNV_nomg(left) * SvNV_nomg(right));
 
     return out;
 }
@@ -1011,7 +1011,7 @@ do_divide_ovfloat(pTHX_ SV *out, SV *left, SV *right,
     if (result)
         return result;
 
-    fast_sv_setnv(aTHX_ out, SvNV(left) / SvNV(right));
+    fast_sv_setnv(aTHX_ out, SvNV_nomg(left) / SvNV_nomg(right));
 
     return out;
 }
@@ -1112,7 +1112,7 @@ do_negate_ovfloat(pTHX_ SV *out, SV *sv) {
   if (result)
     return result;
 
-  fast_sv_setnv(aTHX_ out, -SvNV(sv));
+  fast_sv_setnv(aTHX_ out, -SvNV_nomg(sv));
   return out;
 }
 
