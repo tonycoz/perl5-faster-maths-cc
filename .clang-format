@@ -4,5 +4,9 @@ BasedOnStyle: LLVM
 IndentWidth: 4
 AlwaysBreakAfterDefinitionReturnType: true
 BreakTemplateDeclarations: Yes
+# clang-format tends to put perl headers before stdlib
+# which makes the build cry
+SortIncludes:
+  Enabled: false
 ...
 

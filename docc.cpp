@@ -3,6 +3,7 @@
 #include <iostream>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -48,6 +49,7 @@ enum class CCDebugFlags {
     OpDump = 0x0400,     // u - dUmp the op tree before processing
     OpSeq =
         0x0800, // S - dump the op sequence number when printing op addresses
+    DumpPad = 0x1000, // P - dump the PAD at the start of peep
 };
 
 using CCDebugBits = BitSet<CCDebugFlags>;
@@ -194,6 +196,9 @@ init_debug_flags() {
             case 'S':
                 DebugFlags |= CCDebugFlags::OpSeq;
                 break;
+            case 'P':
+                DebugFlags |= CCDebugFlags::DumpPad;
+                break;
             }
             ++env;
         }
@@ -209,6 +214,20 @@ struct PadSv {
     PadSv(PADOFFSET index_) : index(index_) { assert(index_ != 0); }
     PadSv() = delete;
     PADOFFSET index = 0; // PAD_SV[index]
+
+    std::optional<std::string_view>
+    name(pTHX) const {
+        PADLIST *pl = CvPADLIST(PL_compcv);
+        auto names = PadlistNAMES(pl);
+        PADNAME *pn = padnamelist_fetch(names, index);
+        STRLEN len;
+        if (pn && (len = PadnameLEN(pn)) != 0) {
+            return std::optional{std::string_view{PadnamePV(pn), len}};
+        }
+        else {
+            return std::optional<std::string_view>{};
+        }
+    }
 };
 
 // these start as OP_CONST, but on threaded builds perl moves them to
@@ -245,8 +264,37 @@ struct StackSv {
     ssize_t offset; // PL_stack_sp[-offset]
 };
 
+using NvSource = std::variant<PadSv, LocalSv, StackSv>;
+
+// an SV that's been converted to an NV
+struct LocalNv {
+    LocalNv(int index_, NvSource source_)
+        : local_index(index_), source(source_) {}
+    LocalNv() = delete;
+    int local_index;
+    NvSource source;
+};
+
+// result converting an OpConst into an NV-ish
+struct ConstNv {
+    ConstNv(NV nv_) : nv(nv_) {}
+    ConstNv() = delete;
+    NV nv;
+};
+
+// kept as an SV because it's provenance is unknown, and might have magic
+struct ArgAsNv {
+    ArgAsNv(NvSource source_)
+        : source(source_) {}
+    ArgAsNv() = delete;
+    NvSource source;
+};
+
+// returned when we ask for an NV
+using NvArg = std::variant<LocalNv, ConstNv, ArgAsNv>;
+
 // Represents an argument on the abstract stack
-using ArgType = std::variant<PadSv, OpConst, LocalSv, StackSv>;
+using ArgType = std::variant<PadSv, OpConst, LocalSv, StackSv, LocalNv>;
 
 #if 0 // we may want this again later
 
@@ -353,12 +401,9 @@ std::ostream &
 operator<<(std::ostream &out, const PadSv &psv) {
     dTHX;
     out << "PAD_SV(" << psv.index << ")";
-    PADLIST *pl = CvPADLIST(PL_compcv);
-    auto names = PadlistNAMES(pl);
-    PADNAME *pn = padnamelist_fetch(names, psv.index);
-    const char *pv;
-    if (pn && (pv = PadnamePV(pn))) {
-        out << " /* " << pv << " */";
+    auto name = psv.name(aTHX);
+    if (name) {
+        out << " /* " << *name << " */";
     } else {
         out << " /* t" << psv.index << " */ ";
     }
@@ -446,6 +491,12 @@ operator<<(std::ostream &out, const StackSv &ssv) {
 }
 
 std::ostream &
+operator<<(std::ostream &out, const LocalNv &lnv) {
+    out << "nv" << lnv.local_index;
+    return out;
+}
+
+std::ostream &
 operator<<(std::ostream &out, const ArgType &arg) {
     // std::variant constructor isn't explicit, so if there
     // isn't an implementation of << for the variant type
@@ -463,6 +514,27 @@ operator<<(std::ostream &out, const Stack &s) {
     return out;
 }
 
+void
+write_nv_(std::ostream &out, const LocalNv &lnv) {
+    out << "nv" << lnv.local_index;
+}
+
+void
+write_nv_(std::ostream &out, const ConstNv &cnv) {
+    out << cnv.nv;
+}
+
+void
+write_nv_(std::ostream &out, const ArgAsNv &anv) {
+    out << "nv" << anv.local_index;
+}
+
+std::ostream &
+operator<<(std::ostream &out, const NvArg &arg) {
+    std::visit([&](const auto &a) { write_nv_(out, a); }, arg);
+    return out;
+}
+
 inline bool
 cop_bool_config(pTHX_ const COP *o, std::string_view key) {
     SV *sv = cop_hints_fetch_pvn(cCOPo, key.data(), key.size(), 0, 0);
@@ -475,12 +547,20 @@ CodeFragment &operator<<(CodeFragment &os, auto const &v);
 
 // Used to generate code for an op tree fragment
 struct CodeFragment {
-    CodeFragment(pTHX_ const COP *cop, OP *next_op)
-        : line(CopLINE(cop)), file(CopFILE(cop)),
-          overloading((CopHINTS_get(cop) & HINT_NO_AMAGIC) == 0),
-          use_float(cop_bool_config(aTHX_ cop, "Faster::Maths::CC/float")) {
+    CodeFragment(pTHX_ const COP *cop, OP *next_op) {
         ops.push_back(next_op);
+        start_cop(aTHX_ cop);
+    }
+    // should the COP stuff here get their own struct?
+    void
+    start_cop(pTHX_ const COP *cop) {
+        line = CopLINE(cop);
+        file = CopFILE(cop);
+        overloading = (CopHINTS_get(cop) & HINT_NO_AMAGIC) == 0;
+        use_float = cop_bool_config(aTHX_ cop, "Faster::Maths::CC/float");
         *this << "// " << CopFILE(cop) << ":" << CopLINE(cop) << '\n';
+        *this << "// float: " << use_float << "\n";
+        *this << "// overloading: " << overloading << "\n\n";
     }
     // save an op containing a constant and return an appropriate
     // "argument" value
@@ -516,13 +596,82 @@ struct CodeFragment {
             return arg;
     }
 
+    int
+    make_local_nv() {
+        return local_nv_count++;
+    }
+    NvArg
+    as_number_(pTHX_ const PadSv &psv, bool init) {
+        int index;
+        auto found = nv_locals.find(psv.index);
+        if (found != nv_locals.end()) {
+            index = found->second;
+        }
+        else {
+            index = make_local_nv();
+            nv_locals.emplace(psv.index, index);
+            *this << "NV nv" << index << ";";
+            if (init)
+               *this << "nv" << index << " = SvNV(" << psv << ");\n";
+        }
+        return NvArg{LocalNv{index, NvSource{psv}}};
+    }
+    NvArg
+    as_number_(pTHX_ const OpConst &opc, bool) {
+        SV *sv = cSVOPx_sv(opc.op);
+        // FIXME: might not be an NV, which may make this warn
+        return NvArg{ConstNv{SvNV(sv)}};
+    }
+    NvArg
+    as_number_(pTHX_ const LocalSv &lsv, bool init) {
+        int index = make_local_nv();
+        *this << "NV nv" << index;
+        if (init)
+            *this << "  = SvNV(" << lsv << ")";
+        *this << ";\n";
+        return NvArg{ArgAsNv{index, NvSource{lsv}}};
+    }
+    NvArg
+    as_number_(pTHX_ const StackSv &ssv, bool) {
+        int index = make_local_nv();
+        *this << "NV nv" << index << "  = SvNV(" << ssv << ");\n";
+        return ArgAsNv{index, NvSource{ssv}};
+    }
+    NvArg
+    as_number_(pTHX_ const LocalNv &lnv, bool) {
+        // trivial case
+        return NvArg{lnv};
+    }
+    NvArg
+    as_number(pTHX_ const ArgType &arg, bool init) {
+        //    std::cerr << "as_number " << init << "\n";
+        return std::visit(
+            [=, this](auto arg) { return as_number_(aTHX_ arg, init); }, arg);
+    }
+    void
+    commit_named_(pTHX_ const ConstNv &opc) {
+        std::unreachable();
+    }
+    void
+    commit_named_(pTHX_ const ArgAsNv &anv) {
+        *this << "fast_sv_setnv(" << anv.source << ", nv"
+              << anv.index << ");\n";
+    }
+    void
+    commit_named(const NvArg &arg) {
+        std::visit(
+            [=, this](auto arg){ return commit_named_(aTHX_ arg); }, arg);
+    }
+
     std::ostringstream code; // generated code
     std::vector<OP *> ops;   // ops to be saved in the aux block
-    bool overloading;        // is overloading enabled?
-    bool use_float;          // prefer floating point
+    bool overloading = true; // is overloading enabled?
+    bool use_float = false;  // prefer floating point
 
     // hash-in-perl-speak of PadSvs we've made locals for
     my_map<PADOFFSET, int> pad_locals;
+    // pad indexes we've made local NVs for
+    my_map<PADOFFSET, int> nv_locals;
     // CodeResult result;
     //  code fragment source line extracted from the COP used to
     //  generate the function "// file:line" header
@@ -730,8 +879,10 @@ binop_noov(pTHX_ std::string_view opname, CodeFragment &code,
 ArgType
 binop_float(pTHX_ std::string_view op, CodeFragment &code, const ArgType &out,
             const ArgType &left, const ArgType &right) {
-    code << "fast_sv_setnv(aTHX_ " << out << ", SvNV(" << left << ") " << op
-         << " SvNV(" << right << "));\n";
+    auto nleft = code.as_number(aTHX_ left, true);
+    auto nright = code.as_number(aTHX_ right, true);
+    auto nout = code.as_number(aTHX_ out, false);
+    code << nout << " = " << nleft << " " << op << " " << nright << ";\n";
     return out;
 }
 
@@ -814,7 +965,7 @@ add_unop(pTHX_ OP *o, CodeFragment &code, Stack &stack, std::string_view opname,
         stack.push(std::move(result));
 }
 
-// given a sequence of ops, generate C a C code fragment
+// given a sequence of ops, generate a C code fragment
 void
 compile_code(pTHX_ CodeFragment &code, OP *start, OP *final, OP *prev) {
     Stack stack;
@@ -1018,6 +1169,36 @@ rpeep_for_callcompiled(pTHX_ OP *o, OP *oprev, bool init_enabled) {
     }
 }
 
+void
+pad_dump(pTHX) {
+    PADLIST *pl = CvPADLIST(PL_compcv);
+    auto names = PadlistNAMES(pl);
+    auto namemax = PadnamelistMAX(names);
+    std::cerr << "Size: " << namemax << "\n";
+    for (PADOFFSET i = 1; i <= namemax; ++i) {
+        std::cerr << "  " << i << ": ";
+        if (PADNAME *pn = padnamelist_fetch(names, i)) {
+            if (PadnameIsOUR(pn)) {
+                std::cerr << "our [" << HvNAME(PadnameOURSTASH(pn)) << "::]";
+            } else if (PadnameIsSTATE(pn))
+                std::cerr << "state ";
+            else if (PadnameIsFIELD(pn))
+                std::cerr << "field ";
+            else if (PadnameLEN(pn))
+                std::cerr << "my ";
+            if (PadnameLEN(pn)) {
+                std::string_view name{PadnamePV(pn), PadnameLEN(pn)};
+                std::cerr << name << " ";
+            }
+            if (PadnameOUTER(pn))
+                std::cerr << "OUTER ";
+            if (PadnameHasTYPE(pn))
+                std::cerr << HvNAME(PadnameTYPE(pn)) << " ";
+        }
+        std::cerr << "\n";
+    }
+}
+
 void (*next_rpeepp)(pTHX_ OP *o);
 
 void
@@ -1028,6 +1209,8 @@ my_rpeepp(pTHX_ OP *o) {
     (*next_rpeepp)(aTHX_ o);
 
     if (!fragments) {
+        if (DebugFlags(CCDebugFlags::DumpPad))
+            pad_dump(aTHX);
         if (DebugFlags(CCDebugFlags::OpDump))
             op_dump(o);
         rpeep_for_callcompiled(aTHX_ o, nullptr, false);
